@@ -4,7 +4,7 @@ import { DndContext } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { BindLogic, useActions, useMountedLogic, useValues } from 'kea'
 import { router } from 'kea-router'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import { IconInfo, IconPlus, IconTrash } from '@posthog/icons'
 import {
@@ -41,6 +41,7 @@ import { SurveyActionTrigger } from 'scenes/surveys/SurveyActionTrigger'
 import { SurveyCancelEventTrigger, SurveyEventTrigger } from 'scenes/surveys/SurveyEventTrigger'
 import { SurveyRepeatSchedule } from 'scenes/surveys/SurveyRepeatSchedule'
 import { SurveyResponsesCollection } from 'scenes/surveys/SurveyResponsesCollection'
+import { SurveyTranslations } from 'scenes/surveys/SurveyTranslations'
 import { SurveyWidgetCustomization } from 'scenes/surveys/SurveyWidgetCustomization'
 import { Customization } from 'scenes/surveys/survey-appearance/SurveyCustomization'
 import { sanitizeSurveyAppearance, validateSurveyAppearance } from 'scenes/surveys/utils'
@@ -232,6 +233,7 @@ function SurveyCompletionConditions(): JSX.Element {
 export default function SurveyEdit({ id }: { id: string }): JSX.Element {
     const {
         survey,
+        editingLanguage,
         urlMatchTypeValidationError,
         hasTargetingSet,
         selectedPageIndex,
@@ -257,6 +259,42 @@ export default function SurveyEdit({ id }: { id: string }): JSX.Element {
     } = useActions(surveyLogic)
     const { featureFlags } = useValues(enabledFeaturesLogic)
     const { guidedEditorEnabled } = useValues(surveysLogic)
+    const previewSurvey = useMemo(() => {
+        if (!editingLanguage || !survey.translations?.[editingLanguage]) {
+            return survey
+        }
+
+        const processed = { ...survey }
+        const translation = survey.translations[editingLanguage]
+
+        if (translation.name) {
+            processed.name = translation.name
+        }
+        if (translation.description) {
+            processed.description = translation.description
+        }
+
+        processed.questions = survey.questions.map((q) => {
+            const qTrans = q.translations?.[editingLanguage]
+            if (qTrans) {
+                return {
+                    ...q,
+                    question: qTrans.question || q.question,
+                    description: qTrans.description || q.description,
+                    choices: qTrans.choices || q.choices,
+                    thankYouMessageHeader: qTrans.thankYouMessageHeader || q.thankYouMessageHeader,
+                    thankYouMessageDescription: qTrans.thankYouMessageDescription || q.thankYouMessageDescription,
+                    buttonText: qTrans.buttonText || q.buttonText,
+                    link: qTrans.link || q.link,
+                    lowerBoundLabel: qTrans.lowerBoundLabel || q.lowerBoundLabel,
+                    upperBoundLabel: qTrans.upperBoundLabel || q.upperBoundLabel,
+                }
+            }
+            return q
+        })
+
+        return processed
+    }, [survey, editingLanguage])
     const sortedItemIds = survey.questions.map((_, idx) => idx.toString())
     const { thankYouMessageDescriptionContentType = null } = survey.appearance ?? {}
     useMountedLogic(actionsModel)
@@ -295,14 +333,42 @@ export default function SurveyEdit({ id }: { id: string }): JSX.Element {
         <SceneContent>
             <div className="flex flex-col gap-y-4">
                 <SceneTitleSection
-                    name={survey.name}
-                    description={survey.description}
+                    name={editingLanguage ? (survey.translations?.[editingLanguage]?.name ?? '') : survey.name}
+                    description={
+                        editingLanguage
+                            ? (survey.translations?.[editingLanguage]?.description ?? '')
+                            : survey.description
+                    }
                     resourceType={{
                         type: 'survey',
                     }}
                     canEdit
-                    onNameChange={(name) => setSurveyValue('name', name)}
-                    onDescriptionChange={(description) => setSurveyValue('description', description)}
+                    onNameChange={(name) => {
+                        if (editingLanguage) {
+                            setSurveyValue('translations', {
+                                ...survey.translations,
+                                [editingLanguage]: {
+                                    ...survey.translations?.[editingLanguage],
+                                    name,
+                                },
+                            })
+                        } else {
+                            setSurveyValue('name', name)
+                        }
+                    }}
+                    onDescriptionChange={(description) => {
+                        if (editingLanguage) {
+                            setSurveyValue('translations', {
+                                ...survey.translations,
+                                [editingLanguage]: {
+                                    ...survey.translations?.[editingLanguage],
+                                    description,
+                                },
+                            })
+                        } else {
+                            setSurveyValue('description', description)
+                        }
+                    }}
                     renameDebounceMs={0}
                     forceEdit
                     actions={
@@ -800,6 +866,11 @@ export default function SurveyEdit({ id }: { id: string }): JSX.Element {
                                       },
                                   ]
                                 : []),
+                            {
+                                key: SurveyEditSection.Translations,
+                                header: 'Translations',
+                                content: <SurveyTranslations />,
+                            },
                             ...(survey.type !== SurveyType.ExternalSurvey
                                 ? [
                                       {
@@ -1276,7 +1347,7 @@ export default function SurveyEdit({ id }: { id: string }): JSX.Element {
                     <div className="sticky top-16">
                         <SurveyFormAppearance
                             previewPageIndex={selectedPageIndex || 0}
-                            survey={survey}
+                            survey={previewSurvey}
                             handleSetSelectedPageIndex={(pageIndex) => setSelectedPageIndex(pageIndex)}
                             isEditingSurvey={isEditingSurvey}
                         />
