@@ -130,13 +130,37 @@ class TestSurvey(APIBaseTest):
         survey = Survey.objects.get(id=response.json()["id"])
 
         # Verify survey-level translations
-        assert survey.translations["es"]["name"] == "Encuesta de comentarios"
-        assert survey.translations["fr"]["name"] == "Enquête de satisfaction"
+        assert isinstance(survey.translations, dict)
+        survey_translations: dict[str, Any] = survey.translations
+        es_translation = survey_translations.get("es")
+        fr_translation = survey_translations.get("fr")
+        assert isinstance(es_translation, dict)
+        assert isinstance(fr_translation, dict)
+        assert es_translation["name"] == "Encuesta de comentarios"
+        assert fr_translation["name"] == "Enquête de satisfaction"
 
         # Verify inline question translations
-        assert survey.questions[0]["translations"]["es"]["question"] == "¿Qué tan satisfecho estás?"
-        assert survey.questions[0]["translations"]["fr"]["question"] == "Êtes-vous satisfait?"
-        assert survey.questions[1]["translations"]["es"]["choices"] == ["Analítica", "Feature Flags"]
+        assert isinstance(survey.questions, list)
+        q0 = survey.questions[0]
+        q1 = survey.questions[1]
+        assert isinstance(q0, dict)
+        assert isinstance(q1, dict)
+
+        q0_translations = q0.get("translations")
+        q1_translations = q1.get("translations")
+        assert isinstance(q0_translations, dict)
+        assert isinstance(q1_translations, dict)
+
+        q0_es = q0_translations.get("es")
+        q0_fr = q0_translations.get("fr")
+        q1_es = q1_translations.get("es")
+        assert isinstance(q0_es, dict)
+        assert isinstance(q0_fr, dict)
+        assert isinstance(q1_es, dict)
+
+        assert q0_es["question"] == "¿Qué tan satisfecho estás?"
+        assert q0_fr["question"] == "Êtes-vous satisfait?"
+        assert q1_es["choices"] == ["Analítica", "Feature Flags"]
 
     def test_can_create_survey_without_translations(self):
         response = self.client.post(
@@ -152,7 +176,10 @@ class TestSurvey(APIBaseTest):
         assert response.status_code == status.HTTP_201_CREATED
         survey = Survey.objects.get(id=response.json()["id"])
         assert survey.translations is None
-        assert "translations" not in survey.questions[0]
+        assert isinstance(survey.questions, list)
+        q0 = survey.questions[0]
+        assert isinstance(q0, dict)
+        assert "translations" not in q0
 
     def test_can_remove_survey_translations(self):
         create_response = self.client.post(
@@ -228,16 +255,20 @@ class TestSurvey(APIBaseTest):
 
         assert response.status_code == status.HTTP_201_CREATED
         survey = Survey.objects.get(id=response.json()["id"])
-        assert "<script>" not in survey.translations["es"]["name"]
-        assert "Título" in survey.translations["es"]["name"]
-        assert "<b>Bold</b>" in survey.translations["es"]["description"]
-        assert "<script>" not in survey.translations["es"]["description"]
-        assert "<i>Gracias</i>" in survey.translations["es"]["thankYouMessageHeader"]
-        assert "<script>" not in survey.translations["es"]["thankYouMessageHeader"]
-        assert "<em>Apreciamos tu respuesta</em>" in survey.translations["es"]["thankYouMessageDescription"]
-        assert "<script>" not in survey.translations["es"]["thankYouMessageDescription"]
-        assert "<strong>Cerrar</strong>" in survey.translations["es"]["thankYouMessageCloseButtonText"]
-        assert "<script>" not in survey.translations["es"]["thankYouMessageCloseButtonText"]
+        assert isinstance(survey.translations, dict)
+        survey_translations: dict[str, Any] = survey.translations
+        es_translation = survey_translations.get("es")
+        assert isinstance(es_translation, dict)
+        assert "<script>" not in es_translation["name"]
+        assert "Título" in es_translation["name"]
+        assert "<b>Bold</b>" in es_translation["description"]
+        assert "<script>" not in es_translation["description"]
+        assert "<i>Gracias</i>" in es_translation["thankYouMessageHeader"]
+        assert "<script>" not in es_translation["thankYouMessageHeader"]
+        assert "<em>Apreciamos tu respuesta</em>" in es_translation["thankYouMessageDescription"]
+        assert "<script>" not in es_translation["thankYouMessageDescription"]
+        assert "<strong>Cerrar</strong>" in es_translation["thankYouMessageCloseButtonText"]
+        assert "<script>" not in es_translation["thankYouMessageCloseButtonText"]
 
     def test_inline_question_translations_sanitize_all_fields(self):
         response = self.client.post(
@@ -294,7 +325,23 @@ class TestSurvey(APIBaseTest):
         assert response.status_code == status.HTTP_201_CREATED
         survey = Survey.objects.get(id=response.json()["id"])
 
-        q0_es = survey.questions[0]["translations"]["es"]
+        assert isinstance(survey.questions, list)
+        q0 = survey.questions[0]
+        q1 = survey.questions[1]
+        q2 = survey.questions[2]
+        assert isinstance(q0, dict)
+        assert isinstance(q1, dict)
+        assert isinstance(q2, dict)
+
+        q0_translations = q0.get("translations")
+        q1_translations = q1.get("translations")
+        q2_translations = q2.get("translations")
+        assert isinstance(q0_translations, dict)
+        assert isinstance(q1_translations, dict)
+        assert isinstance(q2_translations, dict)
+
+        q0_es = q0_translations.get("es")
+        assert isinstance(q0_es, dict)
         assert "<i>¿Califica?</i>" in q0_es["question"]
         assert "<script>" not in q0_es["question"]
         assert "<b>Por favor</b>" in q0_es["description"]
@@ -306,10 +353,12 @@ class TestSurvey(APIBaseTest):
         assert "<u>Bueno</u>" in q0_es["upperBoundLabel"]
         assert "<script>" not in q0_es["upperBoundLabel"]
 
-        q1_es = survey.questions[1]["translations"]["es"]
+        q1_es = q1_translations.get("es")
+        assert isinstance(q1_es, dict)
         assert q1_es["link"] == "https://ejemplo.com"
 
-        q2_es = survey.questions[2]["translations"]["es"]
+        q2_es = q2_translations.get("es")
+        assert isinstance(q2_es, dict)
         assert "<b>Opción A</b>" in q2_es["choices"][0]
         assert "<script>" not in q2_es["choices"][1]
         assert "Opción B" in q2_es["choices"][1]
@@ -513,6 +562,7 @@ class TestSurvey(APIBaseTest):
             },
         )
         survey = Survey.objects.get(id=response_data["id"])
+        assert survey.internal_targeting_flag is not None
         assert survey.internal_targeting_flag.active is True
 
     def test_adding_iterations_to_existing_survey_updates_internal_targeting_flag(self):
@@ -1725,9 +1775,14 @@ class TestSurvey(APIBaseTest):
     def test_options_unauthenticated(self):
         unauthenticated_client = Client(enforce_csrf_checks=True)
         unauthenticated_client.logout()
-        request_headers = {"HTTP_ACCESS_CONTROL_REQUEST_METHOD": "GET", "HTTP_ORIGIN": "*", "USER_AGENT": "Agent 008"}
         response = unauthenticated_client.options(
-            "/api/surveys", data={}, follow=False, secure=False, headers={}, **request_headers
+            "/api/surveys",
+            data={},
+            follow=False,
+            secure=False,
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="GET",
+            HTTP_ORIGIN="*",
+            USER_AGENT="Agent 008",
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["Access-Control-Allow-Origin"], "*")
@@ -2024,12 +2079,16 @@ class TestSurvey(APIBaseTest):
             type="popover",
             questions=[{"type": "open", "question": "Initial question?"}],
         )
+        assert isinstance(survey.questions, list)
+        original_question = survey.questions[0]
+        assert isinstance(original_question, dict)
+        original_question_id = str(original_question["id"])
 
         response = self.client.patch(
             f"/api/projects/{self.team.id}/surveys/{survey.id}/",
             data={
                 "name": "Updated Survey",
-                "questions": [{"type": "open", "question": "Updated question?", "id": str(survey.questions[0]["id"])}],
+                "questions": [{"type": "open", "question": "Updated question?", "id": original_question_id}],
             },
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -2056,14 +2115,14 @@ class TestSurvey(APIBaseTest):
                                 "field": "questions",
                                 "before": [
                                     {
-                                        "id": str(survey.questions[0]["id"]),
+                                        "id": original_question_id,
                                         "type": "open",
                                         "question": "Initial question?",
                                     }
                                 ],
                                 "after": [
                                     {
-                                        "id": str(survey.questions[0]["id"]),
+                                        "id": original_question_id,
                                         "type": "open",
                                         "question": "Updated question?",
                                     }
@@ -3783,7 +3842,13 @@ class TestSurveysAPIList(BaseTest, QueryMatchingTest):
                         "type": "popover",
                         "questions": [
                             {
-                                "id": str(survey_with_actions.questions[0]["id"]),
+                                "id": str(
+                                    (
+                                        survey_with_actions.questions[0]
+                                        if isinstance(survey_with_actions.questions, list)
+                                        else {}
+                                    ).get("id")
+                                ),
                                 "type": "open",
                                 "question": "Why's a hedgehog?",
                             }
@@ -3866,7 +3931,13 @@ class TestSurveysAPIList(BaseTest, QueryMatchingTest):
                     "appearance": None,
                     "questions": [
                         {
-                            "id": str(survey_with_flags.questions[0]["id"]),
+                            "id": str(
+                                (
+                                    survey_with_flags.questions[0]
+                                    if isinstance(survey_with_flags.questions, list)
+                                    else {}
+                                ).get("id")
+                            ),
                             "type": "open",
                             "question": "What's a hedgehog?",
                         }
@@ -3889,7 +3960,15 @@ class TestSurveysAPIList(BaseTest, QueryMatchingTest):
                     "name": "Survey 1",
                     "type": "popover",
                     "questions": [
-                        {"id": str(basic_survey.questions[0]["id"]), "type": "open", "question": "What's a survey?"}
+                        {
+                            "id": str(
+                                (basic_survey.questions[0] if isinstance(basic_survey.questions, list) else {}).get(
+                                    "id"
+                                )
+                            ),
+                            "type": "open",
+                            "question": "What's a survey?",
+                        }
                     ],
                     "conditions": None,
                     "appearance": None,
