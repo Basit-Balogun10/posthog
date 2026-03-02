@@ -2074,6 +2074,142 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
             status=status.HTTP_201_CREATED,
         )
 
+    @action(methods=["POST"], detail=True, url_path="translate", required_scopes=["survey:write"])
+    def translate(self, request: request.Request, **kwargs):
+        """Translate survey fields to a target language using AI.
+
+        Accepts a target language code and translates the survey's questions, choices,
+        thank you messages, and other user-facing text.
+
+        Request body:
+        {
+            "target_language": "es",  # Language code (e.g., 'es', 'fr', 'de')
+            "fields": ["questions", "thank_you_message"]  # Optional: specific fields to translate
+        }
+
+        Returns:
+        {
+            "translations": {
+                "questions": [...],  # Translated questions
+                "thank_you_message": "...",  # Translated thank you message
+                ...
+            }
+        }
+        """
+        if not request.user.is_authenticated:
+            raise exceptions.NotAuthenticated()
+
+        if not self.organization.is_ai_data_processing_approved:
+            raise exceptions.PermissionDenied(
+                "AI data processing must be approved by your organization before using translation"
+            )
+
+        survey = self.get_object()
+        user = cast(User, request.user)
+
+        target_language = request.data.get("target_language")
+        if not target_language:
+            raise exceptions.ValidationError({"target_language": "This field is required"})
+
+        # Import here to avoid circular dependency and keep translation logic separate
+        from products.llm_analytics.backend.translation.llm import translate_text
+
+        try:
+            translations = {}
+
+            # Translate questions (most complex part)
+            if survey.questions:
+                translated_questions = []
+                for question in survey.questions:
+                    translated_question = {}
+
+                    # Translate question text
+                    if question.get("question"):
+                        translated_question["question"] = translate_text(
+                            question["question"], target_language, user_distinct_id=user.distinct_id
+                        )
+
+                    # Translate description if present
+                    if question.get("description"):
+                        translated_question["description"] = translate_text(
+                            question["description"], target_language, user_distinct_id=user.distinct_id
+                        )
+
+                    # Translate button text if present
+                    if question.get("buttonText"):
+                        translated_question["buttonText"] = translate_text(
+                            question["buttonText"], target_language, user_distinct_id=user.distinct_id
+                        )
+
+                    # Translate choices for multiple choice questions
+                    if question.get("choices"):
+                        translated_question["choices"] = [
+                            translate_text(choice, target_language, user_distinct_id=user.distinct_id)
+                            for choice in question["choices"]
+                        ]
+
+                    # Translate link text/name
+                    if question.get("link"):
+                        translated_question["link"] = translate_text(
+                            question["link"], target_language, user_distinct_id=user.distinct_id
+                        )
+
+                    translated_questions.append(translated_question)
+
+                translations["questions"] = translated_questions
+
+            # Translate thank you message components
+            if survey.appearance:
+                thank_you_translations = {}
+
+                if survey.appearance.get("thankYouMessageHeader"):
+                    thank_you_translations["thankYouMessageHeader"] = translate_text(
+                        survey.appearance["thankYouMessageHeader"], target_language, user_distinct_id=user.distinct_id
+                    )
+
+                if survey.appearance.get("thankYouMessageDescription"):
+                    thank_you_translations["thankYouMessageDescription"] = translate_text(
+                        survey.appearance["thankYouMessageDescription"],
+                        target_language,
+                        user_distinct_id=user.distinct_id,
+                    )
+
+                if survey.appearance.get("thankYouMessageCloseButtonText"):
+                    thank_you_translations["thankYouMessageCloseButtonText"] = translate_text(
+                        survey.appearance["thankYouMessageCloseButtonText"],
+                        target_language,
+                        user_distinct_id=user.distinct_id,
+                    )
+
+                if thank_you_translations:
+                    translations["appearance"] = thank_you_translations
+
+            report_user_action(
+                user,
+                "survey translation generated",
+                {
+                    "survey_id": str(survey.id),
+                    "target_language": target_language,
+                    "fields_translated": list(translations.keys()),
+                },
+                self.team,
+            )
+
+            return Response(
+                {
+                    "translations": translations,
+                    "target_language": target_language,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception as e:
+            logger.exception("survey_translation_failed", error=str(e), survey_id=str(survey.id))
+            raise exceptions.APIException(
+                detail="Translation failed due to an internal error.",
+                code="translation_error",
+            )
+
 
 class SurveyConfigSerializer(serializers.ModelSerializer):
     class Meta:

@@ -4513,6 +4513,18 @@ const api = {
         async getArchivedResponseUuids(surveyId: Survey['id']): Promise<string[]> {
             return await new ApiRequest().survey(surveyId).withAction('archived-response-uuids').get()
         },
+        async translate(
+            surveyId: Survey['id'],
+            targetLanguage: string
+        ): Promise<{
+            translations: any
+            target_language: string
+        }> {
+            return await new ApiRequest()
+                .survey(surveyId)
+                .withAction('translate')
+                .create({ data: { target_language: targetLanguage } })
+        },
     },
 
     productTours: {

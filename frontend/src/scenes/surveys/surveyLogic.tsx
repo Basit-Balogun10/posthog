@@ -87,6 +87,7 @@ import {
 } from './constants'
 import type { surveyLogicType } from './surveyLogicType'
 import { getSurveyStatus, surveysLogic } from './surveysLogic'
+import { COMMON_LANGUAGES } from './SurveyTranslations'
 import { SurveyFeatureWarning, getSurveyWarnings } from './surveyVersionRequirements'
 import {
     DATE_FORMAT,
@@ -555,6 +556,9 @@ export const surveyLogic = kea<surveyLogicType>([
             notificationId,
             enabled,
         }),
+        autoTranslateSurvey: (targetLanguage: string) => ({ targetLanguage }),
+        autoTranslateSurveySuccess: (translations: any, targetLanguage: string) => ({ translations, targetLanguage }),
+        autoTranslateSurveyFailure: (error: string) => ({ error }),
     }),
     loaders(({ props, actions, values }) => ({
         surveyHeadline: [
@@ -1127,6 +1131,68 @@ export const surveyLogic = kea<surveyLogicType>([
                     })
                 }
             },
+            autoTranslateSurvey: async ({ targetLanguage }) => {
+                const surveyId = values.survey.id
+                if (!surveyId) {
+                    lemonToast.error('Please save the survey before translating')
+                    actions.autoTranslateSurveyFailure('Survey not saved')
+                    return
+                }
+
+                try {
+                    const response = await api.surveys.translate(surveyId, targetLanguage)
+                    actions.autoTranslateSurveySuccess(response.translations, targetLanguage)
+
+                    // Apply translations to the survey
+                    const { translations } = response
+
+                    // Update questions with translations
+                    if (translations.questions) {
+                        const updatedQuestions = values.survey.questions.map((question, idx) => {
+                            const questionTranslation = translations.questions[idx]
+                            if (!questionTranslation) {
+                                return question
+                            }
+
+                            const currentTranslations = question.translations || {}
+                            const mergedTranslation = {
+                                ...currentTranslations[targetLanguage],
+                                ...questionTranslation,
+                            }
+
+                            return {
+                                ...question,
+                                translations: {
+                                    ...currentTranslations,
+                                    [targetLanguage]: mergedTranslation,
+                                },
+                            }
+                        })
+                        actions.setSurveyValue('questions', updatedQuestions)
+                    }
+
+                    // Update appearance (thank you message) translations
+                    if (translations.appearance) {
+                        const currentTranslations = values.survey.translations || {}
+
+                        actions.setSurveyValue('translations', {
+                            ...currentTranslations,
+                            [targetLanguage]: {
+                                ...currentTranslations[targetLanguage],
+                                ...translations.appearance,
+                            },
+                        })
+                    }
+
+                    lemonToast.success(
+                        `Survey automatically translated to ${COMMON_LANGUAGES.find((l) => l.value === targetLanguage)?.label || targetLanguage}`
+                    )
+                } catch (error: any) {
+                    const errorMessage = error?.detail || error?.message || 'Translation failed'
+                    lemonToast.error(`Translation failed: ${errorMessage}`)
+                    actions.autoTranslateSurveyFailure(errorMessage)
+                }
+            },
         }
     }),
     reducers({
@@ -1160,6 +1226,14 @@ export const surveyLogic = kea<surveyLogicType>([
             'until_stopped' as DataCollectionType,
             {
                 setDataCollectionType: (_, { dataCollectionType }) => dataCollectionType,
+            },
+        ],
+        translatingLanguage: [
+            null as string | null,
+            {
+                autoTranslateSurvey: (_, { targetLanguage }) => targetLanguage,
+                autoTranslateSurveySuccess: () => null,
+                autoTranslateSurveyFailure: () => null,
             },
         ],
         propertyFilters: [
