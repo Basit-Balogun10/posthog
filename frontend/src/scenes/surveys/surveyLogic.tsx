@@ -582,6 +582,23 @@ export const surveyLogic = kea<surveyLogicType>([
             errors,
         }),
         autoTranslateSurveyBatchFailure: (error: string) => ({ error }),
+        translateField: (
+            fieldPath: string,
+            fieldValue: string,
+            targetLanguage: string,
+            currentTranslation?: string
+        ) => ({
+            fieldPath,
+            fieldValue,
+            targetLanguage,
+            currentTranslation,
+        }),
+        translateFieldSuccess: (fieldPath: string, translatedValue: string, targetLanguage: string) => ({
+            fieldPath,
+            translatedValue,
+            targetLanguage,
+        }),
+        translateFieldFailure: (error: string) => ({ error }),
     }),
     loaders(({ props, actions, values }) => ({
         surveyHeadline: [
@@ -1341,6 +1358,31 @@ export const surveyLogic = kea<surveyLogicType>([
                     const errorMessage = error?.detail || error?.message || 'Translation failed'
                     lemonToast.error(`Translation failed: ${errorMessage}`)
                     actions.autoTranslateSurveyBatchFailure(errorMessage)
+                }
+            },
+            translateField: async ({ fieldPath, fieldValue, targetLanguage, currentTranslation }) => {
+                const surveyId = values.survey.id
+                if (!surveyId) {
+                    lemonToast.error('Please save the survey before translating')
+                    actions.translateFieldFailure('Survey not saved')
+                    return
+                }
+
+                try {
+                    const response = await api.surveys.translateField(
+                        surveyId,
+                        fieldPath,
+                        fieldValue,
+                        targetLanguage,
+                        currentTranslation
+                    )
+                    actions.translateFieldSuccess(response.field_path, response.translated_value, targetLanguage)
+
+                    lemonToast.success(`Field translated to ${targetLanguage}`)
+                } catch (error: any) {
+                    const errorMessage = error?.detail || error?.message || 'Translation failed'
+                    lemonToast.error(`Translation failed: ${errorMessage}`)
+                    actions.translateFieldFailure(errorMessage)
                 }
             },
         }

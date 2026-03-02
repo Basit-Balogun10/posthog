@@ -4576,6 +4576,30 @@ const api = {
                     },
                 })
         },
+        async translateField(
+            surveyId: Survey['id'] | string,
+            fieldPath: string,
+            fieldValue: string,
+            targetLanguage: string,
+            currentTranslation?: string
+        ): Promise<{
+            field_path: string
+            target_language: string
+            original_value: string
+            translated_value: string
+        }> {
+            return await new ApiRequest()
+                .survey(surveyId)
+                .withAction('translate-field')
+                .create({
+                    data: {
+                        field_path: fieldPath,
+                        field_value: fieldValue,
+                        target_language: targetLanguage,
+                        ...(currentTranslation && { current_translation: currentTranslation }),
+                    },
+                })
+        },
     },
 
     productTours: {

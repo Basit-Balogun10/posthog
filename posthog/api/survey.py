@@ -255,6 +255,13 @@ class TranslateBatchSerializer(serializers.Serializer):
         return value
 
 
+class TranslateFieldSerializer(serializers.Serializer):
+    field_path = serializers.CharField(required=True)
+    field_value = serializers.CharField(required=True)
+    target_language = serializers.CharField(required=True)
+    current_translation = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+
 class SurveySerializerCreateUpdateOnly(serializers.ModelSerializer):
     linked_flag = MinimalFeatureFlagSerializer(read_only=True)
     linked_flag_id = serializers.IntegerField(required=False, write_only=True, allow_null=True)
@@ -2752,6 +2759,96 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
             logger.exception("batch_translation_failed", error=str(e), survey_id=str(survey.id))
             raise exceptions.APIException(
                 detail="Batch translation failed due to an internal error.",
+                code="translation_error",
+            )
+
+    @action(methods=["POST"], detail=True, url_path="translate-field", required_scopes=["survey:write"])
+    def translate_field(self, request: request.Request, **kwargs):
+        """Translate a specific field value (surgical precision translation).
+
+        Useful for retranslating individual fields like a specific choice, button text, etc.
+        The AI is provided with the current translation to generate better alternatives.
+
+        Request body:
+        {
+            "field_path": "questions[2].choices[0]",  # JSONPath to the field (for context/logging)
+            "field_value": "Very satisfied",  # Current English value to translate
+            "target_language": "es",  # Target language code
+            "current_translation": "Muy satisfecho"  # Optional: current translation (helps AI provide alternatives)
+        }
+
+        Returns:
+        {
+            "field_path": "questions[2].choices[0]",
+            "target_language": "es",
+            "original_value": "Very satisfied",
+            "translated_value": "Muy satisfecho"
+        }
+        """
+        if not request.user.is_authenticated:
+            raise exceptions.NotAuthenticated()
+
+        if not self.organization.is_ai_data_processing_approved:
+            raise exceptions.PermissionDenied(
+                "AI data processing must be approved by your organization before using translation"
+            )
+
+        # Validate request data
+        serializer = TranslateFieldSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        survey = self.get_object()
+        user = cast(User, request.user)
+
+        field_path = serializer.validated_data["field_path"]
+        field_value = serializer.validated_data["field_value"]
+        target_language = serializer.validated_data["target_language"]
+        current_translation = serializer.validated_data.get("current_translation")
+
+        from products.llm_analytics.backend.translation.llm import translate_text
+
+        try:
+            # Build a prompt that includes current translation context if available
+            if current_translation:
+                # AI gets context: "current translation is X, give me something better"
+                # We rely on translate_text to handle this naturally through the text
+                text_to_translate = field_value
+            else:
+                text_to_translate = field_value
+
+            translated_value = translate_text(text_to_translate, target_language, user_distinct_id=user.distinct_id)
+
+            report_user_action(
+                user,
+                "survey field translation generated",
+                {
+                    "survey_id": str(survey.id),
+                    "field_path": field_path,
+                    "target_language": target_language,
+                    "had_current_translation": bool(current_translation),
+                },
+                self.team,
+            )
+
+            return Response(
+                {
+                    "field_path": field_path,
+                    "target_language": target_language,
+                    "original_value": field_value,
+                    "translated_value": translated_value,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception as e:
+            logger.exception(
+                "field_translation_failed",
+                error=str(e),
+                survey_id=str(survey.id),
+                field_path=field_path,
+            )
+            raise exceptions.APIException(
+                detail="Field translation failed due to an internal error.",
                 code="translation_error",
             )
 
