@@ -2084,7 +2084,8 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
         Request body:
         {
             "target_language": "es",  # Language code (e.g., 'es', 'fr', 'de')
-            "fields": ["questions", "thank_you_message"]  # Optional: specific fields to translate
+            "fields": ["questions", "thank_you_message"],  # Optional: specific fields to translate
+            "survey": {...}  # Optional: survey data from UI (for drafts/unsaved changes)
         }
 
         Returns:
@@ -2104,12 +2105,26 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                 "AI data processing must be approved by your organization before using translation"
             )
 
-        survey = self.get_object()
         user = cast(User, request.user)
 
         target_language = request.data.get("target_language")
         if not target_language:
             raise exceptions.ValidationError({"target_language": "This field is required"})
+
+        # Accept survey data from POST body (for drafts/unsaved changes)
+        # Fallback to database if not provided (backward compatibility)
+        survey_data = request.data.get("survey")
+        if survey_data:
+            # Use survey data directly from the request
+            survey_questions = survey_data.get("questions", [])
+            survey_appearance = survey_data.get("appearance", {})
+            survey_id = survey_data.get("id")  # May be None for drafts
+        else:
+            # Backward compatibility: fetch from database
+            survey = self.get_object()
+            survey_questions = survey.questions or []
+            survey_appearance = survey.appearance or {}
+            survey_id = survey.id
 
         # Import here to avoid circular dependency and keep translation logic separate
         from products.llm_analytics.backend.translation.llm import translate_text
@@ -2118,9 +2133,9 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
             translations = {}
 
             # Translate questions (most complex part)
-            if survey.questions:
+            if survey_questions:
                 translated_questions = []
-                for question in survey.questions:
+                for question in survey_questions:
                     translated_question = {}
 
                     # Translate question text
@@ -2159,24 +2174,24 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                 translations["questions"] = translated_questions
 
             # Translate thank you message components
-            if survey.appearance:
+            if survey_appearance:
                 thank_you_translations = {}
 
-                if survey.appearance.get("thankYouMessageHeader"):
+                if survey_appearance.get("thankYouMessageHeader"):
                     thank_you_translations["thankYouMessageHeader"] = translate_text(
-                        survey.appearance["thankYouMessageHeader"], target_language, user_distinct_id=user.distinct_id
+                        survey_appearance["thankYouMessageHeader"], target_language, user_distinct_id=user.distinct_id
                     )
 
-                if survey.appearance.get("thankYouMessageDescription"):
+                if survey_appearance.get("thankYouMessageDescription"):
                     thank_you_translations["thankYouMessageDescription"] = translate_text(
-                        survey.appearance["thankYouMessageDescription"],
+                        survey_appearance["thankYouMessageDescription"],
                         target_language,
                         user_distinct_id=user.distinct_id,
                     )
 
-                if survey.appearance.get("thankYouMessageCloseButtonText"):
+                if survey_appearance.get("thankYouMessageCloseButtonText"):
                     thank_you_translations["thankYouMessageCloseButtonText"] = translate_text(
-                        survey.appearance["thankYouMessageCloseButtonText"],
+                        survey_appearance["thankYouMessageCloseButtonText"],
                         target_language,
                         user_distinct_id=user.distinct_id,
                     )
@@ -2188,7 +2203,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                 user,
                 "survey translation generated",
                 {
-                    "survey_id": str(survey.id),
+                    "survey_id": str(survey_id) if survey_id else "draft",
                     "target_language": target_language,
                     "fields_translated": list(translations.keys()),
                 },
@@ -2204,7 +2219,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
             )
 
         except Exception as e:
-            logger.exception("survey_translation_failed", error=str(e), survey_id=str(survey.id))
+            logger.exception("survey_translation_failed", error=str(e), survey_id=str(survey_id) if survey_id else "draft")
             raise exceptions.APIException(
                 detail="Translation failed due to an internal error.",
                 code="translation_error",

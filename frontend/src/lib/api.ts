@@ -4514,8 +4514,9 @@ const api = {
             return await new ApiRequest().survey(surveyId).withAction('archived-response-uuids').get()
         },
         async translate(
-            surveyId: Survey['id'],
-            targetLanguage: string
+            surveyId: Survey['id'] | string,
+            targetLanguage: string,
+            survey?: Partial<Survey>
         ): Promise<{
             translations: any
             target_language: string
@@ -4523,7 +4524,12 @@ const api = {
             return await new ApiRequest()
                 .survey(surveyId)
                 .withAction('translate')
-                .create({ data: { target_language: targetLanguage } })
+                .create({
+                    data: {
+                        target_language: targetLanguage,
+                        ...(survey && { survey }),
+                    },
+                })
         },
     },
 

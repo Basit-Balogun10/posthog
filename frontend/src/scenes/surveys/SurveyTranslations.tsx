@@ -160,7 +160,6 @@ export function SurveyTranslations(): JSX.Element {
                                 }}
                                 loading={translatingLanguage === lang}
                                 tooltip="Auto-translate using AI"
-                                disabledReason={!survey.id ? 'Save the survey first before translating' : undefined}
                             />
                             <LemonButton
                                 icon={<IconTrash />}
