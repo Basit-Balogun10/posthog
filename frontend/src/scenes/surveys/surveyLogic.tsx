@@ -1210,6 +1210,125 @@ export const surveyLogic = kea<surveyLogicType>([
                     actions.autoTranslateSurveyFailure(errorMessage)
                 }
             },
+            autoTranslateSurveyQuestion: async ({ questionIndex, targetLanguage, fields }) => {
+                const surveyId = values.survey.id
+                if (!surveyId) {
+                    lemonToast.error('Please save the survey before translating')
+                    actions.autoTranslateSurveyQuestionFailure('Survey not saved')
+                    return
+                }
+
+                try {
+                    const response = await api.surveys.translateQuestion(
+                        surveyId,
+                        questionIndex,
+                        targetLanguage,
+                        fields
+                    )
+                    actions.autoTranslateSurveyQuestionSuccess(
+                        response.question_index,
+                        response.translations,
+                        targetLanguage
+                    )
+
+                    // Apply translations to the specific question
+                    const updatedQuestions = values.survey.questions.map((question, idx) => {
+                        if (idx !== questionIndex) {
+                            return question
+                        }
+
+                        const currentTranslations = question.translations || {}
+                        const mergedTranslation = {
+                            ...currentTranslations[targetLanguage],
+                            ...response.translations,
+                        }
+
+                        return {
+                            ...question,
+                            translations: {
+                                ...currentTranslations,
+                                [targetLanguage]: mergedTranslation,
+                            },
+                        }
+                    })
+                    actions.setSurveyValue('questions', updatedQuestions)
+
+                    lemonToast.success(
+                        `Question ${questionIndex + 1} translated to ${COMMON_LANGUAGES.find((l) => l.value === targetLanguage)?.label || targetLanguage}`
+                    )
+                } catch (error: any) {
+                    const errorMessage = error?.detail || error?.message || 'Translation failed'
+                    lemonToast.error(`Translation failed: ${errorMessage}`)
+                    actions.autoTranslateSurveyQuestionFailure(errorMessage)
+                }
+            },
+            autoTranslateSurveyBatch: async ({ targetLanguages, fields }) => {
+                const surveyId = values.survey.id
+                if (!surveyId) {
+                    lemonToast.error('Please save the survey before translating')
+                    actions.autoTranslateSurveyBatchFailure('Survey not saved')
+                    return
+                }
+
+                try {
+                    const response = await api.surveys.translateBatch(surveyId, targetLanguages, fields)
+                    actions.autoTranslateSurveyBatchSuccess(response.translations, response.errors)
+
+                    // Apply translations for each language
+                    Object.entries(response.translations).forEach(([lang, translations]) => {
+                        // Update questions with translations
+                        if (translations.questions) {
+                            const updatedQuestions = values.survey.questions.map((question, idx) => {
+                                const questionTranslation = translations.questions[idx]
+                                if (!questionTranslation) {
+                                    return question
+                                }
+
+                                const currentTranslations = question.translations || {}
+                                const mergedTranslation = {
+                                    ...currentTranslations[lang],
+                                    ...questionTranslation,
+                                }
+
+                                return {
+                                    ...question,
+                                    translations: {
+                                        ...currentTranslations,
+                                        [lang]: mergedTranslation,
+                                    },
+                                }
+                            })
+                            actions.setSurveyValue('questions', updatedQuestions)
+                        }
+
+                        // Update appearance translations
+                        if (translations.appearance) {
+                            const currentTranslations = values.survey.translations || {}
+                            actions.setSurveyValue('translations', {
+                                ...currentTranslations,
+                                [lang]: {
+                                    ...currentTranslations[lang],
+                                    ...translations.appearance,
+                                },
+                            })
+                        }
+                    })
+
+                    // Show success/error messages
+                    const successCount = Object.keys(response.translations).length
+                    const errorCount = Object.keys(response.errors).length
+                    if (successCount > 0) {
+                        lemonToast.success(`Translated to ${successCount} language(s)`)
+                    }
+                    if (errorCount > 0) {
+                        lemonToast.error(`Failed to translate to ${errorCount} language(s)`)
+                    }
+                } catch (error: any) {
+                    const errorMessage = error?.detail || error?.message || 'Translation failed'
+                    lemonToast.error(`Translation failed: ${errorMessage}`)
+                    actions.autoTranslateSurveyBatchFailure(errorMessage)
+                }
+            },
         }
     }),
     reducers({
@@ -1251,6 +1370,12 @@ export const surveyLogic = kea<surveyLogicType>([
                 autoTranslateSurvey: (_, { targetLanguage }) => targetLanguage,
                 autoTranslateSurveySuccess: () => null,
                 autoTranslateSurveyFailure: () => null,
+                autoTranslateSurveyQuestion: (_, { targetLanguage }) => targetLanguage,
+                autoTranslateSurveyQuestionSuccess: () => null,
+                autoTranslateSurveyQuestionFailure: () => null,
+                autoTranslateSurveyBatch: () => 'batch',
+                autoTranslateSurveyBatchSuccess: () => null,
+                autoTranslateSurveyBatchFailure: () => null,
             },
         ],
         propertyFilters: [
