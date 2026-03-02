@@ -5,8 +5,8 @@ import { CSS } from '@dnd-kit/utilities'
 import { useActions, useValues } from 'kea'
 import { Group } from 'kea-forms'
 
-import { IconPlusSmall, IconTrash } from '@posthog/icons'
-import { LemonButton, LemonCheckbox, LemonDialog, LemonInput, LemonSelect, LemonTag } from '@posthog/lemon-ui'
+import { IconMagicWand, IconPlusSmall, IconTrash } from '@posthog/icons'
+import { LemonButton, LemonCheckbox, LemonDialog, LemonInput, LemonInputSelect, LemonSelect, LemonTag } from '@posthog/lemon-ui'
 
 import { LemonField } from 'lib/lemon-ui/LemonField'
 import { QuestionBranchingInput } from 'scenes/surveys/components/question-branching/QuestionBranchingInput'
@@ -26,6 +26,7 @@ import { NewSurvey, SCALE_OPTIONS, SURVEY_RATING_SCALE, SurveyQuestionLabel } fr
 import { HTMLEditor } from './SurveyAppearanceUtils'
 import { SurveyDragHandle } from './SurveyDragHandle'
 import { surveyLogic } from './surveyLogic'
+import { COMMON_LANGUAGES } from './SurveyTranslations'
 import { isThumbQuestion } from './utils'
 
 type SurveyQuestionHeaderProps = {
@@ -43,8 +44,8 @@ export function SurveyEditQuestionHeader({
     setSelectedPageIndex,
     setSurveyValue,
 }: SurveyQuestionHeaderProps): JSX.Element {
-    const { hasBranchingLogic } = useValues(surveyLogic)
-    const { deleteBranchingLogic } = useActions(surveyLogic)
+    const { hasBranchingLogic, translatingLanguage } = useValues(surveyLogic)
+    const { deleteBranchingLogic, autoTranslateSurveyQuestion } = useActions(surveyLogic)
     const { setNodeRef, attributes, transform, transition, listeners, isDragging } = useSortable({
         id: index.toString(),
     })
@@ -68,7 +69,34 @@ export function SurveyEditQuestionHeader({
                     Question {index + 1}. {survey.questions[index].question}
                 </b>
             </div>
-            {survey.questions.length > 1 && (
+            <div className="flex items-center gap-1">
+                <LemonInputSelect
+                    mode="single"
+                    options={COMMON_LANGUAGES.map((l) => ({
+                        key: l.value,
+                        label: l.label,
+                    }))}
+                    onChange={(values) => {
+                        const lang = values[0]
+                        if (lang) {
+                            autoTranslateSurveyQuestion(index, lang)
+                        }
+                    }}
+                    placeholder="Translate..."
+                    size="xsmall"
+                    value={[]}
+                    disabled={!survey.id}
+                >
+                    <LemonButton
+                        icon={<IconMagicWand />}
+                        size="xsmall"
+                        type="secondary"
+                        loading={translatingLanguage !== null}
+                        tooltip="Translate this question using AI"
+                        disabledReason={!survey.id ? 'Save the survey first before translating' : undefined}
+                    />
+                </LemonInputSelect>
+                {survey.questions.length > 1 && (
                 <LemonButton
                     icon={<IconTrash />}
                     size="xsmall"
@@ -110,7 +138,8 @@ export function SurveyEditQuestionHeader({
                     }}
                     tooltipPlacement="top-end"
                 />
-            )}
+                )}
+            </div>
         </div>
     )
 }

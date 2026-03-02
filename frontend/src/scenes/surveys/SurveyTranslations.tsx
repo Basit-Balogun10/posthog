@@ -1,3 +1,4 @@
+import React from 'react'
 import { useActions, useValues } from 'kea'
 
 import { IconMagicWand, IconTrash } from '@posthog/icons'
@@ -38,7 +39,10 @@ export const COMMON_LANGUAGES = [
 
 export function SurveyTranslations(): JSX.Element {
     const { survey, editingLanguage, translatingLanguage } = useValues(surveyLogic)
-    const { setSurveyValue, setEditingLanguage, autoTranslateSurvey } = useActions(surveyLogic)
+    const { setSurveyValue, setEditingLanguage, autoTranslateSurvey, autoTranslateSurveyBatch } = useActions(surveyLogic)
+    
+    const [selectedFields, setSelectedFields] = React.useState<string[]>([])
+    const [batchLanguages, setBatchLanguages] = React.useState<string[]>([])
 
     const addedLanguages = Object.keys(survey.translations || {})
 
@@ -107,6 +111,15 @@ export function SurveyTranslations(): JSX.Element {
         }
     }
 
+    const fieldOptions = [
+        { value: 'question', label: 'Question text' },
+        { value: 'description', label: 'Description' },
+        { value: 'buttonText', label: 'Button text' },
+        { value: 'choices', label: 'Choices' },
+        { value: 'link', label: 'Link text' },
+        { value: 'appearance', label: 'Thank you message' },
+    ]
+
     return (
         <div className={`flex flex-col ${addedLanguages.length > 0 ? 'gap-4' : ''}`}>
             <div className="flex gap-2">
@@ -129,6 +142,72 @@ export function SurveyTranslations(): JSX.Element {
                     value={[]}
                 />
             </div>
+
+            {addedLanguages.length > 0 && (
+                <div className="border rounded p-3 space-y-3">
+                    <h3 className="font-semibold text-sm">Batch translate</h3>
+                    <div className="space-y-2">
+                        <LemonInputSelect
+                            mode="multiple"
+                            options={COMMON_LANGUAGES.filter((l) => addedLanguages.includes(l.value)).map((l) => ({
+                                key: l.value,
+                                label: l.label,
+                            }))}
+                            onChange={(values) => setBatchLanguages(values)}
+                            placeholder="Select languages to translate"
+                            value={batchLanguages}
+                        />
+                        
+                        <div className="space-y-1">
+                            <label className="text-xs font-semibold">Fields to translate (optional)</label>
+                            <div className="grid grid-cols-2 gap-2">
+                                {fieldOptions.map((field) => (
+                                    <LemonButton
+                                        key={field.value}
+                                        size="xsmall"
+                                        type={selectedFields.includes(field.value) ? 'primary' : 'secondary'}
+                                        onClick={() => {
+                                            setSelectedFields(
+                                                selectedFields.includes(field.value)
+                                                    ? selectedFields.filter((f) => f !== field.value)
+                                                    : [...selectedFields, field.value]
+                                            )
+                                        }}
+                                    >
+                                        {field.label}
+                                    </LemonButton>
+                                ))}
+                            </div>
+                            <p className="text-xs text-muted">Leave empty to translate all fields</p>
+                        </div>
+
+                        <LemonButton
+                            icon={<IconMagicWand />}
+                            type="primary"
+                            fullWidth
+                            onClick={() => {
+                                if (batchLanguages.length > 0) {
+                                    autoTranslateSurveyBatch(
+                                        batchLanguages,
+                                        selectedFields.length > 0 ? selectedFields : undefined
+                                    )
+                                }
+                            }}
+                            loading={translatingLanguage === 'batch'}
+                            disabled={batchLanguages.length === 0 || !survey.id}
+                            disabledReason={
+                                !survey.id
+                                    ? 'Save the survey first before translating'
+                                    : batchLanguages.length === 0
+                                    ? 'Select at least one language'
+                                    : undefined
+                            }
+                        >
+                            Translate {batchLanguages.length} language{batchLanguages.length !== 1 ? 's' : ''}
+                        </LemonButton>
+                    </div>
+                </div>
+            )}
 
             <div className="space-y-2">
                 {addedLanguages.length > 0 && (
@@ -156,7 +235,7 @@ export function SurveyTranslations(): JSX.Element {
                                 type="secondary"
                                 onClick={(e) => {
                                     e.stopPropagation()
-                                    autoTranslateSurvey(lang)
+                                    autoTranslateSurvey(lang, selectedFields.length > 0 ? selectedFields : undefined)
                                 }}
                                 loading={translatingLanguage === lang}
                                 tooltip="Auto-translate using AI"
