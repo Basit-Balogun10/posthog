@@ -2,7 +2,7 @@ import { useActions, useValues } from 'kea'
 import React from 'react'
 
 import { IconMagicWand, IconTrash } from '@posthog/icons'
-import { LemonButton, LemonDialog, LemonInputSelect } from '@posthog/lemon-ui'
+import { LemonButton, LemonCheckbox, LemonDialog, LemonInputSelect, LemonSelect } from '@posthog/lemon-ui'
 
 import { SurveyQuestionType } from '~/types'
 
@@ -39,11 +39,17 @@ export const COMMON_LANGUAGES = [
 
 export function SurveyTranslations(): JSX.Element {
     const { survey, editingLanguage, translatingLanguage } = useValues(surveyLogic)
-    const { setSurveyValue, setEditingLanguage, autoTranslateSurvey, autoTranslateSurveyBatch } =
-        useActions(surveyLogic)
+    const {
+        setSurveyValue,
+        setEditingLanguage,
+        autoTranslateSurvey,
+        autoTranslateSurveyBatch,
+        autoTranslateSurveyQuestion,
+    } = useActions(surveyLogic)
 
-    const [selectedFields, setSelectedFields] = React.useState<string[]>([])
     const [batchLanguages, setBatchLanguages] = React.useState<string[]>([])
+    const [selectedQuestions, setSelectedQuestions] = React.useState<number[]>([])
+    const [selectedLanguageForQuestions, setSelectedLanguageForQuestions] = React.useState<string | null>(null)
 
     const addedLanguages = Object.keys(survey.translations || {})
 
@@ -112,15 +118,6 @@ export function SurveyTranslations(): JSX.Element {
         }
     }
 
-    const fieldOptions = [
-        { value: 'question', label: 'Question text' },
-        { value: 'description', label: 'Description' },
-        { value: 'buttonText', label: 'Button text' },
-        { value: 'choices', label: 'Choices' },
-        { value: 'link', label: 'Link text' },
-        { value: 'appearance', label: 'Thank you message' },
-    ]
-
     return (
         <div className={`flex flex-col ${addedLanguages.length > 0 ? 'gap-4' : ''}`}>
             <div className="flex gap-2">
@@ -159,39 +156,15 @@ export function SurveyTranslations(): JSX.Element {
                             value={batchLanguages}
                         />
 
-                        <div className="space-y-1">
-                            <label className="text-xs font-semibold">Fields to translate (optional)</label>
-                            <div className="grid grid-cols-2 gap-2">
-                                {fieldOptions.map((field) => (
-                                    <LemonButton
-                                        key={field.value}
-                                        size="xsmall"
-                                        type={selectedFields.includes(field.value) ? 'primary' : 'secondary'}
-                                        onClick={() => {
-                                            setSelectedFields(
-                                                selectedFields.includes(field.value)
-                                                    ? selectedFields.filter((f) => f !== field.value)
-                                                    : [...selectedFields, field.value]
-                                            )
-                                        }}
-                                    >
-                                        {field.label}
-                                    </LemonButton>
-                                ))}
-                            </div>
-                            <p className="text-xs text-muted">Leave empty to translate all fields</p>
-                        </div>
-
                         <LemonButton
                             icon={<IconMagicWand />}
                             type="primary"
                             fullWidth
-                            onClick={() => {
+                            onClick={(e) => {
                                 if (batchLanguages.length > 0) {
-                                    autoTranslateSurveyBatch(
-                                        batchLanguages,
-                                        selectedFields.length > 0 ? selectedFields : undefined
-                                    )
+                                    // Default: smart retranslation, Ctrl+click: full retranslation
+                                    const onlyChangedFields = !(e.ctrlKey || e.metaKey)
+                                    autoTranslateSurveyBatch(batchLanguages, onlyChangedFields)
                                 }
                             }}
                             loading={translatingLanguage === 'batch'}
@@ -205,6 +178,81 @@ export function SurveyTranslations(): JSX.Element {
                             }
                         >
                             Translate {batchLanguages.length} language{batchLanguages.length !== 1 ? 's' : ''}
+                        </LemonButton>
+                    </div>
+                </div>
+            )}
+
+            {addedLanguages.length > 0 && survey.questions.length > 1 && (
+                <div className="border rounded p-3 space-y-3">
+                    <h3 className="font-semibold text-sm">Translate selected questions</h3>
+                    <div className="space-y-2">
+                        <LemonSelect
+                            options={COMMON_LANGUAGES.filter((l) => addedLanguages.includes(l.value)).map((l) => ({
+                                value: l.value,
+                                label: l.label,
+                            }))}
+                            onChange={(value) => setSelectedLanguageForQuestions(value)}
+                            placeholder="Select target language"
+                            value={selectedLanguageForQuestions}
+                        />
+
+                        <div className="space-y-1">
+                            <div className="text-xs text-muted">Select questions to translate:</div>
+                            <div className="space-y-1">
+                                {survey.questions.map((question, idx) => (
+                                    <LemonCheckbox
+                                        key={idx}
+                                        checked={selectedQuestions.includes(idx)}
+                                        onChange={(checked) => {
+                                            if (checked) {
+                                                setSelectedQuestions([...selectedQuestions, idx])
+                                            } else {
+                                                setSelectedQuestions(selectedQuestions.filter((i) => i !== idx))
+                                            }
+                                        }}
+                                        label={
+                                            <span className="text-sm">
+                                                Q{idx + 1}: {question.question || 'Untitled question'}
+                                            </span>
+                                        }
+                                    />
+                                ))}
+                            </div>
+                        </div>
+
+                        <LemonButton
+                            icon={<IconMagicWand />}
+                            type="primary"
+                            fullWidth
+                            onClick={async (e) => {
+                                if (selectedQuestions.length > 0 && selectedLanguageForQuestions) {
+                                    const onlyChangedFields = !(e.ctrlKey || e.metaKey)
+                                    // Translate each selected question
+                                    for (const questionIndex of selectedQuestions) {
+                                        await autoTranslateSurveyQuestion(
+                                            questionIndex,
+                                            selectedLanguageForQuestions,
+                                            onlyChangedFields
+                                        )
+                                    }
+                                    // Clear selection after successful translation
+                                    setSelectedQuestions([])
+                                }
+                            }}
+                            loading={translatingLanguage !== null && translatingLanguage !== 'batch'}
+                            disabled={selectedQuestions.length === 0 || !selectedLanguageForQuestions || !survey.id}
+                            disabledReason={
+                                !survey.id
+                                    ? 'Save the survey first before translating'
+                                    : !selectedLanguageForQuestions
+                                      ? 'Select a target language'
+                                      : selectedQuestions.length === 0
+                                        ? 'Select at least one question'
+                                        : undefined
+                            }
+                        >
+                            Translate {selectedQuestions.length} question{selectedQuestions.length !== 1 ? 's' : ''}
                         </LemonButton>
                     </div>
                 </div>
@@ -236,10 +284,13 @@ export function SurveyTranslations(): JSX.Element {
                                 type="secondary"
                                 onClick={(e) => {
                                     e.stopPropagation()
-                                    autoTranslateSurvey(lang, selectedFields.length > 0 ? selectedFields : undefined)
+                                    // Default: smart retranslation (only changed fields)
+                                    // Ctrl/Cmd+click: full retranslation (all fields)
+                                    const onlyChangedFields = !(e.ctrlKey || e.metaKey)
+                                    autoTranslateSurvey(lang, onlyChangedFields)
                                 }}
                                 loading={translatingLanguage === lang}
-                                tooltip="Auto-translate using AI"
+                                tooltip="Retranslate only fields that changed in the original language. Ctrl+click to retranslate all fields."
                             />
                             <LemonButton
                                 icon={<IconTrash />}
