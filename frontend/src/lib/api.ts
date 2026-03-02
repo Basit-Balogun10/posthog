@@ -4516,7 +4516,9 @@ const api = {
         async translate(
             surveyId: Survey['id'] | string,
             targetLanguage: string,
-            survey?: Partial<Survey>
+            survey?: Partial<Survey>,
+            fields?: string[],
+            onlyChangedFields?: boolean
         ): Promise<{
             translations: any
             target_language: string
@@ -4528,6 +4530,51 @@ const api = {
                     data: {
                         target_language: targetLanguage,
                         ...(survey && { survey }),
+                        ...(fields && { fields }),
+                        ...(onlyChangedFields && { only_changed_fields: true }),
+                    },
+                })
+        },
+        async translateQuestion(
+            surveyId: Survey['id'] | string,
+            questionIndex: number,
+            targetLanguage: string,
+            survey?: Partial<Survey>,
+            fields?: string[]
+        ): Promise<{
+            question_index: number
+            target_language: string
+            translations: any
+        }> {
+            return await new ApiRequest()
+                .survey(surveyId)
+                .withAction('translate-question')
+                .create({
+                    data: {
+                        question_index: questionIndex,
+                        target_language: targetLanguage,
+                        ...(survey && { survey }),
+                        ...(fields && { fields }),
+                    },
+                })
+        },
+        async translateBatch(
+            surveyId: Survey['id'] | string,
+            targetLanguages: string[],
+            survey?: Partial<Survey>,
+            fields?: string[]
+        ): Promise<{
+            translations: Record<string, any>
+            errors: Record<string, string>
+        }> {
+            return await new ApiRequest()
+                .survey(surveyId)
+                .withAction('translate-batch')
+                .create({
+                    data: {
+                        target_languages: targetLanguages,
+                        ...(survey && { survey }),
+                        ...(fields && { fields }),
                     },
                 })
         },

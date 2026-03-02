@@ -6540,3 +6540,165 @@ class TestSurveyGranularTranslation(APIBaseTest):
         # Appearance should be translated
         assert data["translations"]["appearance"]["thankYouMessageHeader"] == "[FR] Thanks!"
         assert data["translations"]["appearance"]["thankYouMessageDescription"] == "[FR] We appreciate it"
+
+
+class TestSurveySmartRetranslation(APIBaseTest):
+    """Tests for smart retranslation (Ctrl+click) feature"""
+
+    @patch("products.llm_analytics.backend.translation.llm.translate_text")
+    def test_smart_retranslation_only_changed_fields(self, mock_translate):
+        """Test smart retranslation only translates fields that changed since last translation"""
+
+        def mock_translate_fn(text, target_lang, user_distinct_id=None):
+            return f"[ES] {text}"
+
+        mock_translate.side_effect = mock_translate_fn
+
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        # Create survey with existing translation and _source snapshot
+        survey_data = {
+            "name": "Product Survey",
+            "questions": [
+                {
+                    "type": "open",
+                    "question": "What's your feedback?",  # Will be changed
+                    "description": "Tell us more",  # Will NOT be changed
+                    "translations": {
+                        "es": {
+                            "question": "[ES-OLD] What's your feedback?",  # Old translation
+                            "description": "[ES-OLD] Tell us more",  # Old translation
+                            "_source": {  # Snapshot of English when last translated
+                                "question": "What's your feedback?",  # Same as current
+                                "description": "Tell us more",  # Same as current
+                            },
+                        }
+                    },
+                }
+            ],
+        }
+
+        # User changed question text but not description
+        survey_data["questions"][0]["question"] = "How satisfied are you?"  # CHANGED
+        # description stays "Tell us more"  # UNCHANGED
+
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Test Survey",
+            type="popover",
+            questions=[{"type": "open", "question": "Original"}],  # DB has old data
+        )
+
+        # Call with only_changed_fields=true (simulating Ctrl+click)
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate/",
+            data={"target_language": "es", "only_changed_fields": True, "survey": survey_data},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        # Should only translate the changed field (question)
+        assert "question" in data["translations"]["questions"][0]
+        assert data["translations"]["questions"][0]["question"] == "[ES] How satisfied are you?"
+
+        # Should NOT translate unchanged field (description)
+        assert "description" not in data["translations"]["questions"][0]
+
+        # Verify translate_text was only called for changed field
+        # Should be called once for the changed question
+        assert mock_translate.call_count == 1
+
+    @patch("products.llm_analytics.backend.translation.llm.translate_text")
+    def test_smart_retranslation_first_time_translates_all(self, mock_translate):
+        """Test smart retranslation translates everything when no _source exists (first time)"""
+
+        def mock_translate_fn(text, target_lang, user_distinct_id=None):
+            return f"[FR] {text}"
+
+        mock_translate.side_effect = mock_translate_fn
+
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        survey_data = {
+            "questions": [
+                {
+                    "type": "rating",
+                    "question": "Rate us",
+                    "description": "From 1-5",
+                    # No existing translations - first time
+                }
+            ],
+        }
+
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Test Survey",
+            type="popover",
+            questions=[{"type": "open", "question": "Test"}],
+        )
+
+        # Call with only_changed_fields=true but no _source (first translation)
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate/",
+            data={"target_language": "fr", "only_changed_fields": True, "survey": survey_data},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        # Should translate all fields (no _source means first time)
+        assert data["translations"]["questions"][0]["question"] == "[FR] Rate us"
+        assert data["translations"]["questions"][0]["description"] == "[FR] From 1-5"
+        assert mock_translate.call_count == 2  # Both fields translated
+
+    @patch("products.llm_analytics.backend.translation.llm.translate_text")
+    def test_full_retranslation_creates_source_snapshot(self, mock_translate):
+        """Test full retranslation (normal click) creates _source snapshot for future smart retranslation"""
+
+        def mock_translate_fn(text, target_lang, user_distinct_id=None):
+            return f"[DE] {text}"
+
+        mock_translate.side_effect = mock_translate_fn
+
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        survey_data = {
+            "questions": [
+                {
+                    "type": "open",
+                    "question": "What do you think?",
+                    "description": "Your opinion matters",
+                }
+            ],
+        }
+
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Test Survey",
+            type="popover",
+            questions=[{"type": "open", "question": "Test"}],
+        )
+
+        # Full retranslation (only_changed_fields=false, normal click)
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate/",
+            data={"target_language": "de", "only_changed_fields": False, "survey": survey_data},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        # Should include _source snapshot
+        assert "_source" in data["translations"]["questions"][0]
+        assert data["translations"]["questions"][0]["_source"]["question"] == "What do you think?"
+        assert data["translations"]["questions"][0]["_source"]["description"] == "Your opinion matters"

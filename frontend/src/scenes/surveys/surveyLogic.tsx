@@ -556,7 +556,11 @@ export const surveyLogic = kea<surveyLogicType>([
             notificationId,
             enabled,
         }),
-        autoTranslateSurvey: (targetLanguage: string, fields?: string[]) => ({ targetLanguage, fields }),
+        autoTranslateSurvey: (targetLanguage: string, fields?: string[], onlyChangedFields?: boolean) => ({ 
+            targetLanguage, 
+            fields,
+            onlyChangedFields 
+        }),
         autoTranslateSurveySuccess: (translations: any, targetLanguage: string) => ({ translations, targetLanguage }),
         autoTranslateSurveyFailure: (error: string) => ({ error }),
         autoTranslateSurveyQuestion: (questionIndex: number, targetLanguage: string, fields?: string[]) => ({
@@ -1148,13 +1152,13 @@ export const surveyLogic = kea<surveyLogicType>([
                     })
                 }
             },
-            autoTranslateSurvey: async ({ targetLanguage }) => {
+            autoTranslateSurvey: async ({ targetLanguage, fields, onlyChangedFields }) => {
                 // Use survey ID if available, otherwise use 'new' as placeholder for drafts
                 const surveyId = values.survey.id || 'new'
 
                 try {
                     // Pass survey data to handle both drafts and saved surveys with unsaved changes
-                    const response = await api.surveys.translate(surveyId, targetLanguage, values.survey)
+                    const response = await api.surveys.translate(surveyId, targetLanguage, values.survey, fields, onlyChangedFields)
                     actions.autoTranslateSurveySuccess(response.translations, targetLanguage)
 
                     // Apply translations to the survey

@@ -2085,7 +2085,8 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
         {
             "target_language": "es",  # Language code (e.g., 'es', 'fr', 'de')
             "fields": ["questions", "thank_you_message"],  # Optional: specific fields to translate
-            "survey": {...}  # Optional: survey data from UI (for drafts/unsaved changes)
+            "survey": {...},  # Optional: survey data from UI (for drafts/unsaved changes)
+            "only_changed_fields": true  # Optional: only retranslate fields that changed since last translation
         }
 
         Returns:
@@ -2111,6 +2112,9 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
         if not target_language:
             raise exceptions.ValidationError({"target_language": "This field is required"})
 
+        # Smart retranslation: only translate fields that changed since last translation
+        only_changed_fields = request.data.get("only_changed_fields", False)
+
         # Accept survey data from POST body (for drafts/unsaved changes)
         # Fallback to database if not provided (backward compatibility)
         survey_data = request.data.get("survey")
@@ -2129,45 +2133,88 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
         # Import here to avoid circular dependency and keep translation logic separate
         from products.llm_analytics.backend.translation.llm import translate_text
 
+        # Unified helper function for field filtering and smart retranslation
+        def should_translate_field(field_name: str, current_value: str = None, source_snapshot: dict = None) -> bool:
+            """Check if field should be translated (field filtering + smart retranslation)"""
+            # First check: field filtering (granular feature)
+            if fields_to_translate is not None and field_name not in fields_to_translate:
+                return False  # Field not in filter list
+            
+            # Second check: smart retranslation (Phase 2 feature)
+            if only_changed_fields and current_value is not None and source_snapshot:
+                if source_snapshot.get(field_name) == current_value:
+                    return False  # Field unchanged since last translation
+            
+            return True  # Translate this field
+
         try:
             translations = {}
+
+            # Determine if we should process questions at all (if any question field is in fields_to_translate)
+            question_fields = ["question", "description", "buttonText", "choices", "link"]
+            should_process_questions = (
+                fields_to_translate is None
+                or "questions" in fields_to_translate
+                or any(field in fields_to_translate for field in question_fields)
+            )
 
             # Translate questions (most complex part)
             if survey_questions:
                 translated_questions = []
-                for question in survey_questions:
+                for idx, question in enumerate(survey_questions):
                     translated_question = {}
+                    
+                    # Get existing translation and source snapshot for smart retranslation
+                    existing_translations = question.get("translations", {})
+                    existing_for_lang = existing_translations.get(target_language, {})
+                    source_snapshot = existing_for_lang.get("_source", {}) if only_changed_fields else {}
+                    
+                    # Track source English for this translation (for future smart retranslation)
+                    if not only_changed_fields:  # Only update source on full retranslation
+                        translated_question["_source"] = {}
 
                     # Translate question text
-                    if question.get("question"):
+                    if question.get("question") and should_translate_field("question", question["question"], source_snapshot):
                         translated_question["question"] = translate_text(
                             question["question"], target_language, user_distinct_id=user.distinct_id
                         )
+                        if not only_changed_fields:
+                            translated_question["_source"]["question"] = question["question"]
 
                     # Translate description if present
-                    if question.get("description"):
+                    if question.get("description") and should_translate_field("description", question["description"], source_snapshot):
                         translated_question["description"] = translate_text(
                             question["description"], target_language, user_distinct_id=user.distinct_id
                         )
+                        if not only_changed_fields:
+                            translated_question["_source"]["description"] = question["description"]
 
                     # Translate button text if present
-                    if question.get("buttonText"):
+                    if question.get("buttonText") and should_translate_field("buttonText", question["buttonText"], source_snapshot):
                         translated_question["buttonText"] = translate_text(
                             question["buttonText"], target_language, user_distinct_id=user.distinct_id
                         )
+                        if not only_changed_fields:
+                            translated_question["_source"]["buttonText"] = question["buttonText"]
 
                     # Translate choices for multiple choice questions
                     if question.get("choices"):
-                        translated_question["choices"] = [
-                            translate_text(choice, target_language, user_distinct_id=user.distinct_id)
-                            for choice in question["choices"]
-                        ]
+                        choices_str = str(question["choices"])  # Compare as string for snapshot
+                        if should_translate_field("choices", choices_str, source_snapshot):
+                            translated_question["choices"] = [
+                                translate_text(choice, target_language, user_distinct_id=user.distinct_id)
+                                for choice in question["choices"]
+                            ]
+                            if not only_changed_fields:
+                                translated_question["_source"]["choices"] = choices_str
 
                     # Translate link text/name
-                    if question.get("link"):
+                    if question.get("link") and should_translate_field("link", question["link"], source_snapshot):
                         translated_question["link"] = translate_text(
                             question["link"], target_language, user_distinct_id=user.distinct_id
                         )
+                        if not only_changed_fields:
+                            translated_question["_source"]["link"] = question["link"]
 
                     translated_questions.append(translated_question)
 
@@ -2176,25 +2223,49 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
             # Translate thank you message components
             if survey_appearance:
                 thank_you_translations = {}
+                
+                # Get existing appearance translation and source snapshot
+                if survey_data:
+                    existing_survey_translations = survey_data.get("translations", {})
+                else:
+                    existing_survey_translations = getattr(survey, "translations", {})
+                existing_appearance = existing_survey_translations.get(target_language, {})
+                appearance_source = existing_appearance.get("_source", {}) if only_changed_fields else {}
+                
+                # Track source for appearance fields
+                if not only_changed_fields:
+                    thank_you_translations["_source"] = {}
 
-                if survey_appearance.get("thankYouMessageHeader"):
+                if survey_appearance.get("thankYouMessageHeader") and should_translate_field(
+                    "thankYouMessageHeader", survey_appearance["thankYouMessageHeader"], appearance_source
+                ):
                     thank_you_translations["thankYouMessageHeader"] = translate_text(
                         survey_appearance["thankYouMessageHeader"], target_language, user_distinct_id=user.distinct_id
                     )
+                    if not only_changed_fields:
+                        thank_you_translations["_source"]["thankYouMessageHeader"] = survey_appearance["thankYouMessageHeader"]
 
-                if survey_appearance.get("thankYouMessageDescription"):
+                if survey_appearance.get("thankYouMessageDescription") and should_translate_field(
+                    "thankYouMessageDescription", survey_appearance["thankYouMessageDescription"], appearance_source
+                ):
                     thank_you_translations["thankYouMessageDescription"] = translate_text(
                         survey_appearance["thankYouMessageDescription"],
                         target_language,
                         user_distinct_id=user.distinct_id,
                     )
+                    if not only_changed_fields:
+                        thank_you_translations["_source"]["thankYouMessageDescription"] = survey_appearance["thankYouMessageDescription"]
 
-                if survey_appearance.get("thankYouMessageCloseButtonText"):
+                if survey_appearance.get("thankYouMessageCloseButtonText") and should_translate_field(
+                    "thankYouMessageCloseButtonText", survey_appearance["thankYouMessageCloseButtonText"], appearance_source
+                ):
                     thank_you_translations["thankYouMessageCloseButtonText"] = translate_text(
                         survey_appearance["thankYouMessageCloseButtonText"],
                         target_language,
                         user_distinct_id=user.distinct_id,
                     )
+                    if not only_changed_fields:
+                        thank_you_translations["_source"]["thankYouMessageCloseButtonText"] = survey_appearance["thankYouMessageCloseButtonText"]
 
                 if thank_you_translations:
                     translations["appearance"] = thank_you_translations

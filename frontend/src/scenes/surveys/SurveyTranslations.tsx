@@ -284,13 +284,13 @@ export function SurveyTranslations(): JSX.Element {
                                 type="secondary"
                                 onClick={(e) => {
                                     e.stopPropagation()
-                                    // Default: smart retranslation (only changed fields)
-                                    // Ctrl/Cmd+click: full retranslation (all fields)
-                                    const onlyChangedFields = !(e.ctrlKey || e.metaKey)
-                                    autoTranslateSurvey(lang, onlyChangedFields)
+                                    // Ctrl/Cmd+click for smart retranslation (only changed fields)
+                                    const onlyChangedFields = e.ctrlKey || e.metaKey
+                                    const fields = selectedFields.length > 0 ? selectedFields : undefined
+                                    autoTranslateSurvey(lang, fields, onlyChangedFields)
                                 }}
                                 loading={translatingLanguage === lang}
-                                tooltip="Retranslate only fields that changed in the original language. Ctrl+click to retranslate all fields."
+                                tooltip="Click to retranslate all fields. Ctrl+click to update only changed fields."
                             />
                             <LemonButton
                                 icon={<IconTrash />}
