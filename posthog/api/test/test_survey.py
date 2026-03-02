@@ -5860,3 +5860,251 @@ class TestSurveyResponseArchive(ClickhouseTestMixin, APIBaseTest):
         self.assertIn(uuid1, uuids)
         self.assertIn(uuid2, uuids)
         self.assertNotIn(uuid3, uuids)
+
+
+class TestSurveyTranslation(APIBaseTest):
+    """Tests for AI-powered survey translation endpoint"""
+
+    @patch("products.llm_analytics.backend.translation.llm.translate_text")
+    def test_translate_survey_success(self, mock_translate):
+        """Test successful translation of survey content"""
+
+        # Mock the translation function
+        def mock_translate_fn(text, target_lang, user_distinct_id=None):
+            translations = {
+                "How satisfied are you?": "¿Qué tan satisfecho estás?",
+                "Rate your experience": "Califica tu experiencia",
+                "Submit": "Enviar",
+                "Analytics": "Analítica",
+                "Feature Flags": "Feature Flags",
+                "Thank you!": "¡Gracias!",
+                "We appreciate your feedback": "Apreciamos tus comentarios",
+                "Close": "Cerrar",
+            }
+            return translations.get(text, text)
+
+        mock_translate.side_effect = mock_translate_fn
+
+        # Enable AI data processing
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        # Create survey
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Feedback Survey",
+            type="popover",
+            questions=[
+                {
+                    "type": "rating",
+                    "question": "How satisfied are you?",
+                    "description": "Rate your experience",
+                    "buttonText": "Submit",
+                },
+                {
+                    "type": "multiple_choice",
+                    "question": "Which features do you use?",
+                    "choices": ["Analytics", "Feature Flags"],
+                },
+            ],
+            appearance={
+                "thankYouMessageHeader": "Thank you!",
+                "thankYouMessageDescription": "We appreciate your feedback",
+                "thankYouMessageCloseButtonText": "Close",
+            },
+        )
+
+        # Call translation endpoint
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate/",
+            data={"target_language": "es"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        assert data["target_language"] == "es"
+        assert "translations" in data
+
+        # Verify questions translation
+        assert len(data["translations"]["questions"]) == 2
+        assert data["translations"]["questions"][0]["question"] == "¿Qué tan satisfecho estás?"
+        assert data["translations"]["questions"][0]["description"] == "Califica tu experiencia"
+        assert data["translations"]["questions"][0]["buttonText"] == "Enviar"
+        assert data["translations"]["questions"][1]["choices"] == ["Analítica", "Feature Flags"]
+
+        # Verify thank you message translation
+        assert data["translations"]["appearance"]["thankYouMessageHeader"] == "¡Gracias!"
+        assert data["translations"]["appearance"]["thankYouMessageDescription"] == "Apreciamos tus comentarios"
+        assert data["translations"]["appearance"]["thankYouMessageCloseButtonText"] == "Cerrar"
+
+    def test_translate_survey_without_ai_approval(self):
+        """Test translation fails without AI data processing approval"""
+        # Ensure AI data processing is NOT approved
+        self.organization.is_ai_data_processing_approved = False
+        self.organization.save()
+
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Test Survey",
+            type="popover",
+            questions=[{"type": "open", "question": "Test?"}],
+        )
+
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate/",
+            data={"target_language": "es"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert "AI data processing must be approved" in response.json()["detail"]
+
+    def test_translate_survey_missing_target_language(self):
+        """Test translation fails without target language"""
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Test Survey",
+            type="popover",
+            questions=[{"type": "open", "question": "Test?"}],
+        )
+
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate/",
+            data={},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        response_data = response.json()
+        assert response_data["attr"] == "target_language"
+        assert "required" in response_data["detail"].lower()
+
+    @patch("products.llm_analytics.backend.translation.llm.translate_text")
+    def test_translate_survey_with_all_field_types(self, mock_translate):
+        """Test translation handles all translatable field types"""
+
+        def mock_translate_fn(text, target_lang, user_distinct_id=None):
+            return f"[FR] {text}"
+
+        mock_translate.side_effect = mock_translate_fn
+
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Complete Survey",
+            type="popover",
+            questions=[
+                {
+                    "type": "rating",
+                    "question": "Rate us",
+                    "description": "Your rating",
+                    "buttonText": "Submit Rating",
+                },
+                {
+                    "type": "link",
+                    "question": "Visit our site",
+                    "link": "https://example.com",
+                },
+            ],
+        )
+
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate/",
+            data={"target_language": "fr"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        assert data["translations"]["questions"][0]["question"] == "[FR] Rate us"
+        assert data["translations"]["questions"][0]["description"] == "[FR] Your rating"
+        assert data["translations"]["questions"][0]["buttonText"] == "[FR] Submit Rating"
+        assert data["translations"]["questions"][1]["link"] == "[FR] https://example.com"
+
+    @patch("products.llm_analytics.backend.translation.llm.translate_text")
+    def test_translate_survey_with_no_questions(self, mock_translate):
+        """Test translation handles survey with no questions"""
+        mock_translate.return_value = "Translated"
+
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Empty Survey",
+            type="popover",
+            questions=[],
+        )
+
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate/",
+            data={"target_language": "es"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        # Should succeed but not have questions key
+        assert "questions" not in data["translations"]
+
+    @patch("products.llm_analytics.backend.translation.llm.translate_text")
+    def test_translate_survey_only_thank_you_message(self, mock_translate):
+        """Test translation works for only thank you message without questions"""
+
+        def mock_translate_fn(text, target_lang, user_distinct_id=None):
+            return f"DE: {text}"
+
+        mock_translate.side_effect = mock_translate_fn
+
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Thank You Only",
+            type="popover",
+            questions=[],
+            appearance={
+                "thankYouMessageHeader": "Thanks!",
+            },
+        )
+
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate/",
+            data={"target_language": "de"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        assert data["translations"]["appearance"]["thankYouMessageHeader"] == "DE: Thanks!"
+
+    def test_translate_nonexistent_survey(self):
+        """Test translation fails for non-existent survey"""
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        fake_id = "00000000-0000-0000-0000-000000000000"
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{fake_id}/translate/",
+            data={"target_language": "es"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
