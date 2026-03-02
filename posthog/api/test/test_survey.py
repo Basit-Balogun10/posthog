@@ -6108,3 +6108,316 @@ class TestSurveyTranslation(APIBaseTest):
         )
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+class TestSurveyGranularTranslation(APIBaseTest):
+    """Tests for granular translation features: per-question, batch, and partial field translation"""
+
+    @patch("products.llm_analytics.backend.translation.llm.translate_text")
+    def test_translate_question_success(self, mock_translate):
+        """Test per-question translation translates only the specified question"""
+
+        def mock_translate_fn(text, target_lang, user_distinct_id=None):
+            return f"[ES] {text}"
+
+        mock_translate.side_effect = mock_translate_fn
+
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Multi Question Survey",
+            type="popover",
+            questions=[
+                {"type": "open", "question": "Question 1?", "description": "First question"},
+                {"type": "rating", "question": "Question 2?", "description": "Second question"},
+                {"type": "open", "question": "Question 3?"},
+            ],
+        )
+
+        # Translate only question at index 1
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate-question/",
+            data={"question_index": 1, "target_language": "es"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        assert data["question_index"] == 1
+        assert data["target_language"] == "es"
+        assert data["translations"]["question"] == "[ES] Question 2?"
+        assert data["translations"]["description"] == "[ES] Second question"
+
+    @patch("products.llm_analytics.backend.translation.llm.translate_text")
+    def test_translate_question_with_specific_fields(self, mock_translate):
+        """Test per-question translation with fields parameter translates only specified fields"""
+
+        def mock_translate_fn(text, target_lang, user_distinct_id=None):
+            return f"[FR] {text}"
+
+        mock_translate.side_effect = mock_translate_fn
+
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Test Survey",
+            type="popover",
+            questions=[
+                {
+                    "type": "rating",
+                    "question": "How satisfied?",
+                    "description": "Rate us",
+                    "buttonText": "Submit",
+                }
+            ],
+        )
+
+        # Translate only question and buttonText, skip description
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate-question/",
+            data={"question_index": 0, "target_language": "fr", "fields": ["question", "buttonText"]},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        assert data["translations"]["question"] == "[FR] How satisfied?"
+        assert data["translations"]["buttonText"] == "[FR] Submit"
+        assert "description" not in data["translations"]  # Should be skipped
+
+    def test_translate_question_invalid_index(self):
+        """Test per-question translation fails with invalid question index"""
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Test Survey",
+            type="popover",
+            questions=[{"type": "open", "question": "Question 1?"}],
+        )
+
+        # Try to translate question at index 5 (doesn't exist)
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate-question/",
+            data={"question_index": 5, "target_language": "es"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Invalid question index" in response.json()["question_index"]
+
+    def test_translate_question_missing_params(self):
+        """Test per-question translation requires both question_index and target_language"""
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Test Survey",
+            type="popover",
+            questions=[{"type": "open", "question": "Question 1?"}],
+        )
+
+        # Missing question_index
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate-question/",
+            data={"target_language": "es"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "question_index" in response.json()
+
+        # Missing target_language
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate-question/",
+            data={"question_index": 0},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "target_language" in response.json()
+
+    @patch("products.llm_analytics.backend.translation.llm.translate_text")
+    def test_translate_batch_multiple_languages(self, mock_translate):
+        """Test batch translation translates to multiple languages concurrently"""
+
+        def mock_translate_fn(text, target_lang, user_distinct_id=None):
+            return f"[{target_lang.upper()}] {text}"
+
+        mock_translate.side_effect = mock_translate_fn
+
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Test Survey",
+            type="popover",
+            questions=[{"type": "open", "question": "Hello?", "description": "Test"}],
+            appearance={"thankYouMessageHeader": "Thanks!"},
+        )
+
+        # Translate to 3 languages at once
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate-batch/",
+            data={"target_languages": ["es", "fr", "de"]},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        assert "translations" in data
+        assert len(data["translations"]) == 3
+
+        # Check Spanish
+        assert data["translations"]["es"]["questions"][0]["question"] == "[ES] Hello?"
+        assert data["translations"]["es"]["questions"][0]["description"] == "[ES] Test"
+        assert data["translations"]["es"]["appearance"]["thankYouMessageHeader"] == "[ES] Thanks!"
+
+        # Check French
+        assert data["translations"]["fr"]["questions"][0]["question"] == "[FR] Hello?"
+
+        # Check German
+        assert data["translations"]["de"]["questions"][0]["question"] == "[DE] Hello?"
+
+    def test_translate_batch_empty_languages(self):
+        """Test batch translation fails with empty language array"""
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Test Survey",
+            type="popover",
+            questions=[{"type": "open", "question": "Test?"}],
+        )
+
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate-batch/",
+            data={"target_languages": []},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "At least one language is required" in response.json()["target_languages"]
+
+    def test_translate_batch_not_array(self):
+        """Test batch translation fails when target_languages is not an array"""
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Test Survey",
+            type="popover",
+            questions=[{"type": "open", "question": "Test?"}],
+        )
+
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate-batch/",
+            data={"target_languages": "es"},  # String instead of array
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "must be an array" in response.json()["target_languages"]
+
+    @patch("products.llm_analytics.backend.translation.llm.translate_text")
+    def test_translate_partial_fields(self, mock_translate):
+        """Test partial translation only translates specified fields"""
+
+        def mock_translate_fn(text, target_lang, user_distinct_id=None):
+            return f"[ES] {text}"
+
+        mock_translate.side_effect = mock_translate_fn
+
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Test Survey",
+            type="popover",
+            questions=[
+                {
+                    "type": "multiple_choice",
+                    "question": "Choose one",
+                    "description": "Select your choice",
+                    "choices": ["Option A", "Option B"],
+                    "buttonText": "Submit",
+                }
+            ],
+            appearance={"thankYouMessageHeader": "Thank you!"},
+        )
+
+        # Only translate question text and choices, skip description, buttonText, and appearance
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate/",
+            data={"target_language": "es", "fields": ["question", "choices"]},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        # These should be translated
+        assert data["translations"]["questions"][0]["question"] == "[ES] Choose one"
+        assert data["translations"]["questions"][0]["choices"] == ["[ES] Option A", "[ES] Option B"]
+
+        # These should NOT be translated
+        assert "description" not in data["translations"]["questions"][0]
+        assert "buttonText" not in data["translations"]["questions"][0]
+        assert "appearance" not in data["translations"]
+
+    @patch("products.llm_analytics.backend.translation.llm.translate_text")
+    def test_translate_partial_skip_questions(self, mock_translate):
+        """Test partial translation can skip questions entirely by only translating appearance"""
+
+        def mock_translate_fn(text, target_lang, user_distinct_id=None):
+            return f"[FR] {text}"
+
+        mock_translate.side_effect = mock_translate_fn
+
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Test Survey",
+            type="popover",
+            questions=[{"type": "open", "question": "Question?"}],
+            appearance={"thankYouMessageHeader": "Thanks!", "thankYouMessageDescription": "We appreciate it"},
+        )
+
+        # Only translate appearance, skip questions
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate/",
+            data={"target_language": "fr", "fields": ["appearance"]},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        # Questions should NOT be translated
+        assert "questions" not in data["translations"]
+
+        # Appearance should be translated
+        assert data["translations"]["appearance"]["thankYouMessageHeader"] == "[FR] Thanks!"
+        assert data["translations"]["appearance"]["thankYouMessageDescription"] == "[FR] We appreciate it"
