@@ -666,6 +666,9 @@ SURVEY_TRANSLATE_TOOL_DESCRIPTION = dedent("""
     - User wants to translate a survey to another language
     - User mentions translating survey content to Spanish, French, etc.
     - User wants to localize a survey for different markets/regions
+    - User wants to translate a specific question only
+    - User wants to translate to multiple languages at once
+    - User wants to translate only specific fields (e.g., just questions, not descriptions)
 
     # Finding the Survey
     First use the search tool with kind="surveys" to find the survey ID, then use this tool.
@@ -677,8 +680,15 @@ SURVEY_TRANSLATE_TOOL_DESCRIPTION = dedent("""
 
     You can also use localized variants like en-US, en-GB, es-ES, es-MX, fr-FR, fr-CA, de-DE
 
+    # Translation Options
+    - **Full survey translation**: Provide just survey_id and target_language
+    - **Single question**: Use question_index (0-based) to translate one question
+    - **Multiple languages**: Use target_languages array to translate to many languages at once
+    - **Specific fields**: Use fields array to translate only certain fields
+      (e.g., ['question', 'choices'] to skip descriptions and button text)
+
     # How it works
-    - The tool uses AI to translate all survey questions, descriptions, button text, and thank you messages
+    - The tool uses AI to translate survey questions, descriptions, button text, and thank you messages
     - Translations are added to the survey's translations object
     - Original survey content remains unchanged
     - The survey editor can further refine the AI-generated translations if needed
@@ -693,8 +703,21 @@ SURVEY_TRANSLATE_TOOL_DESCRIPTION = dedent("""
 
 class TranslateSurveyToolArgs(BaseModel):
     survey_id: str = Field(description="UUID of the survey to translate")
-    target_language: str = Field(
-        description="Target language code (e.g., 'es' for Spanish, 'fr' for French, 'de' for German, 'pt-BR' for Brazilian Portuguese)"
+    target_language: str | None = Field(
+        default=None,
+        description="Target language code for single-language translation (e.g., 'es', 'fr', 'de'). Use this OR target_languages, not both.",
+    )
+    target_languages: list[str] | None = Field(
+        default=None,
+        description="Array of language codes for batch translation (e.g., ['es', 'fr', 'de']). Use this OR target_language, not both.",
+    )
+    question_index: int | None = Field(
+        default=None,
+        description="Zero-based index of a specific question to translate. If provided, only that question is translated.",
+    )
+    fields: list[str] | None = Field(
+        default=None,
+        description="Array of field names to translate. Options: 'question', 'description', 'buttonText', 'choices', 'link', 'appearance'. If not provided, all fields are translated.",
     )
 
 
@@ -710,10 +733,31 @@ class TranslateSurveyTool(MaxTool):
         """Translating is not a dangerous operation - it just adds translations."""
         return False
 
-    async def _arun_impl(self, survey_id: str, target_language: str) -> tuple[str, dict[str, Any]]:
+    async def _arun_impl(
+        self,
+        survey_id: str,
+        target_language: str | None = None,
+        target_languages: list[str] | None = None,
+        question_index: int | None = None,
+        fields: list[str] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
         """
-        Translate a survey to the target language using AI.
+        Translate a survey to the target language(s) using AI.
+        Supports single/batch translation, per-question translation, and field filtering.
         """
+        # Validate that either target_language or target_languages is provided
+        if not target_language and not target_languages:
+            return "You must provide either 'target_language' or 'target_languages'.", {
+                "error": "invalid_params",
+                "details": "Missing target language(s)",
+            }
+
+        if target_language and target_languages:
+            return "Provide either 'target_language' or 'target_languages', not both.", {
+                "error": "invalid_params",
+                "details": "Cannot use both single and batch translation modes",
+            }
+
         try:
             from products.llm_analytics.backend.translation.llm import translate_text
 
@@ -738,8 +782,54 @@ class TranslateSurveyTool(MaxTool):
 
             survey_name = survey.name
 
-            # Build translations object
-            translations: dict[str, Any] = {"questions": []}
+            # Helper to check if a field should be translated
+            def should_translate_field(field_name: str) -> bool:
+                return fields is None or field_name in fields
+
+            # If batch translation to multiple languages
+            if target_languages:
+                all_translations = {}
+                errors = {}
+
+                for lang in target_languages:
+                    try:
+                        lang_translations = await self._translate_survey(
+                            survey, lang, user, question_index, should_translate_field
+                        )
+                        all_translations[lang] = lang_translations
+                    except Exception as e:
+                        errors[lang] = str(e)
+
+                success_count = len(all_translations)
+                error_count = len(errors)
+
+                await sync_to_async(self._report_user_action)("batch survey translation generated")
+
+                message = f"Survey '{survey_name}' translated to {success_count} language(s)"
+                if error_count > 0:
+                    message += f" ({error_count} failed)"
+
+                return message, {
+                    "survey_id": survey_id,
+                    "survey_name": survey_name,
+                    "translations": all_translations,
+                    "errors": errors,
+                }
+
+            # Single language translation
+            target_lang = target_language or target_languages[0]  # type: ignore
+            translations = await self._translate_survey(survey, target_lang, user, question_index, should_translate_field)
+
+            await sync_to_async(self._report_user_action)("survey translation generated")
+
+            question_msg = f" (question {question_index + 1})" if question_index is not None else ""
+            return f"Survey '{survey_name}'{question_msg} successfully translated to {target_lang}!", {
+                "survey_id": survey_id,
+                "survey_name": survey_name,
+                "target_language": target_lang,
+                "question_index": question_index,
+                "translations": translations,
+            }
 
             # Translate each question
             for question in survey.questions:
@@ -811,3 +901,83 @@ class TranslateSurveyTool(MaxTool):
         except Exception as e:
             capture_exception(e, {"team_id": self._team.id, "user_id": self._user.id})
             return f"Failed to translate survey: {str(e)}", {"error": "translation_failed", "details": str(e)}
+
+    async def _translate_survey(
+        self,
+        survey: Survey,
+        target_language: str,
+        user: Any,
+        question_index: int | None,
+        should_translate_field: Any,
+    ) -> dict[str, Any]:
+        """Helper method to translate a survey to a single language."""
+        from products.llm_analytics.backend.translation.llm import translate_text
+
+        translations: dict[str, Any] = {}
+        questions_to_translate = (
+            [survey.questions[question_index]] if question_index is not None else survey.questions
+        )
+
+        # Translate questions
+        if questions_to_translate:
+            translated_questions = []
+            for question in questions_to_translate:
+                question_translation: dict[str, Any] = {}
+
+                if "question" in question and should_translate_field("question"):
+                    question_translation["question"] = await sync_to_async(translate_text)(
+                        question["question"], target_language, user_distinct_id=user.distinct_id
+                    )
+
+                if "description" in question and should_translate_field("description"):
+                    question_translation["description"] = await sync_to_async(translate_text)(
+                        question["description"], target_language, user_distinct_id=user.distinct_id
+                    )
+
+                if "buttonText" in question and should_translate_field("buttonText"):
+                    question_translation["buttonText"] = await sync_to_async(translate_text)(
+                        question["buttonText"], target_language, user_distinct_id=user.distinct_id
+                    )
+
+                if "choices" in question and isinstance(question["choices"], list) and should_translate_field("choices"):
+                    choices_translation = []
+                    for choice in question["choices"]:
+                        translated_choice = await sync_to_async(translate_text)(
+                            choice, target_language, user_distinct_id=user.distinct_id
+                        )
+                        choices_translation.append(translated_choice)
+                    question_translation["choices"] = choices_translation
+
+                if "link" in question and should_translate_field("link"):
+                    question_translation["link"] = await sync_to_async(translate_text)(
+                        question["link"], target_language, user_distinct_id=user.distinct_id
+                    )
+
+                translated_questions.append(question_translation)
+
+            translations["questions"] = translated_questions
+
+        # Translate appearance (thank you message) if not doing per-question translation
+        if question_index is None and should_translate_field("appearance"):
+            appearance = survey.appearance or {}
+            appearance_translation: dict[str, Any] = {}
+
+            if "thankYouMessageHeader" in appearance:
+                appearance_translation["thankYouMessageHeader"] = await sync_to_async(translate_text)(
+                    appearance["thankYouMessageHeader"], target_language, user_distinct_id=user.distinct_id
+                )
+
+            if "thankYouMessageDescription" in appearance:
+                appearance_translation["thankYouMessageDescription"] = await sync_to_async(translate_text)(
+                    appearance["thankYouMessageDescription"], target_language, user_distinct_id=user.distinct_id
+                )
+
+            if "thankYouMessageCloseButtonText" in appearance:
+                appearance_translation["thankYouMessageCloseButtonText"] = await sync_to_async(translate_text)(
+                    appearance["thankYouMessageCloseButtonText"], target_language, user_distinct_id=user.distinct_id
+                )
+
+            if appearance_translation:
+                translations["appearance"] = appearance_translation
+
+        return translations
