@@ -39,13 +39,8 @@ export const COMMON_LANGUAGES = [
 
 export function SurveyTranslations(): JSX.Element {
     const { survey, editingLanguage, translatingLanguage } = useValues(surveyLogic)
-    const {
-        setSurveyValue,
-        setEditingLanguage,
-        autoTranslateSurvey,
-        autoTranslateSurveyBatch,
-        autoTranslateSurveyQuestion,
-    } = useActions(surveyLogic)
+    const { setSurveyValue, setEditingLanguage, autoTranslateSurvey, autoTranslateSurveyBatch } =
+        useActions(surveyLogic)
 
     const [batchLanguages, setBatchLanguages] = React.useState<string[]>([])
     const [selectedQuestions, setSelectedQuestions] = React.useState<number[]>([])
@@ -284,13 +279,13 @@ export function SurveyTranslations(): JSX.Element {
                                 type="secondary"
                                 onClick={(e) => {
                                     e.stopPropagation()
-                                    // Ctrl/Cmd+click for smart retranslation (only changed fields)
-                                    const onlyChangedFields = e.ctrlKey || e.metaKey
-                                    const fields = selectedFields.length > 0 ? selectedFields : undefined
-                                    autoTranslateSurvey(lang, fields, onlyChangedFields)
+                                    // Default: smart retranslation (only changed fields)
+                                    // Ctrl/Cmd+click: full retranslation (all fields)
+                                    const onlyChangedFields = !(e.ctrlKey || e.metaKey)
+                                    autoTranslateSurvey(lang, onlyChangedFields)
                                 }}
                                 loading={translatingLanguage === lang}
-                                tooltip="Click to retranslate all fields. Ctrl+click to update only changed fields."
+                                tooltip="Retranslate only fields that changed in the original language. Ctrl+click to retranslate all fields."
                             />
                             <LemonButton
                                 icon={<IconTrash />}

@@ -4517,7 +4517,6 @@ const api = {
             surveyId: Survey['id'] | string,
             targetLanguage: string,
             survey?: Partial<Survey>,
-            fields?: string[],
             onlyChangedFields?: boolean
         ): Promise<{
             translations: any
@@ -4530,7 +4529,6 @@ const api = {
                     data: {
                         target_language: targetLanguage,
                         ...(survey && { survey }),
-                        ...(fields && { fields }),
                         ...(onlyChangedFields && { only_changed_fields: true }),
                     },
                 })
@@ -4540,7 +4538,7 @@ const api = {
             questionIndex: number,
             targetLanguage: string,
             survey?: Partial<Survey>,
-            fields?: string[]
+            onlyChangedFields?: boolean
         ): Promise<{
             question_index: number
             target_language: string
@@ -4554,7 +4552,7 @@ const api = {
                         question_index: questionIndex,
                         target_language: targetLanguage,
                         ...(survey && { survey }),
-                        ...(fields && { fields }),
+                        ...(onlyChangedFields && { only_changed_fields: true }),
                     },
                 })
         },
@@ -4562,7 +4560,7 @@ const api = {
             surveyId: Survey['id'] | string,
             targetLanguages: string[],
             survey?: Partial<Survey>,
-            fields?: string[]
+            onlyChangedFields?: boolean
         ): Promise<{
             translations: Record<string, any>
             errors: Record<string, string>
@@ -4574,7 +4572,7 @@ const api = {
                     data: {
                         target_languages: targetLanguages,
                         ...(survey && { survey }),
-                        ...(fields && { fields }),
+                        ...(onlyChangedFields && { only_changed_fields: true }),
                     },
                 })
         },
