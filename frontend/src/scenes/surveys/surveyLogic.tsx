@@ -1149,15 +1149,12 @@ export const surveyLogic = kea<surveyLogicType>([
                 }
             },
             autoTranslateSurvey: async ({ targetLanguage }) => {
-                const surveyId = values.survey.id
-                if (!surveyId) {
-                    lemonToast.error('Please save the survey before translating')
-                    actions.autoTranslateSurveyFailure('Survey not saved')
-                    return
-                }
+                // Use survey ID if available, otherwise use 'new' as placeholder for drafts
+                const surveyId = values.survey.id || 'new'
 
                 try {
-                    const response = await api.surveys.translate(surveyId, targetLanguage)
+                    // Pass survey data to handle both drafts and saved surveys with unsaved changes
+                    const response = await api.surveys.translate(surveyId, targetLanguage, values.survey)
                     actions.autoTranslateSurveySuccess(response.translations, targetLanguage)
 
                     // Apply translations to the survey

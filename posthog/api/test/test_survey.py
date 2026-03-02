@@ -5669,6 +5669,117 @@ class TestSurveyBulkDuplication(APIBaseTest):
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    @patch("products.llm_analytics.backend.translation.llm.translate_text")
+    def test_translate_draft_survey_with_survey_data(self, mock_translate):
+        """Test translation works for unsaved draft surveys using survey data in POST body"""
+
+        def mock_translate_fn(text, target_lang, user_distinct_id=None):
+            return f"[ES] {text}"
+
+        mock_translate.side_effect = mock_translate_fn
+
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        # Create a saved survey to use for the endpoint (needs ID for route)
+        saved_survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Old Name",
+            type="popover",
+            questions=[{"type": "open", "question": "Old question?"}],
+        )
+
+        # Simulate draft/unsaved changes - pass different data in POST body
+        draft_survey_data = {
+            "id": None,  # Draft has no ID
+            "name": "Draft Feedback Survey",
+            "questions": [
+                {
+                    "type": "rating",
+                    "question": "How do you like our new feature?",
+                    "description": "Rate from 1-5",
+                    "buttonText": "Submit",
+                },
+                {
+                    "type": "multiple_choice",
+                    "question": "What improvements would you like?",
+                    "choices": ["Speed", "UI", "Documentation"],
+                },
+            ],
+            "appearance": {
+                "thankYouMessageHeader": "Thanks for your feedback!",
+                "thankYouMessageDescription": "We'll use this to improve",
+            },
+        }
+
+        # Call translation endpoint with draft survey data
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{saved_survey.id}/translate/",
+            data={"target_language": "es", "survey": draft_survey_data},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        # Verify it translated the DRAFT data, not the saved survey data
+        assert data["translations"]["questions"][0]["question"] == "[ES] How do you like our new feature?"
+        assert data["translations"]["questions"][0]["description"] == "[ES] Rate from 1-5"
+        assert data["translations"]["questions"][0]["buttonText"] == "[ES] Submit"
+        assert data["translations"]["questions"][1]["choices"] == ["[ES] Speed", "[ES] UI", "[ES] Documentation"]
+        assert data["translations"]["appearance"]["thankYouMessageHeader"] == "[ES] Thanks for your feedback!"
+
+        # Verify the saved survey in DB was NOT modified
+        saved_survey.refresh_from_db()
+        assert saved_survey.questions[0]["question"] == "Old question?"
+
+    @patch("products.llm_analytics.backend.translation.llm.translate_text")
+    def test_translate_unsaved_changes_with_survey_data(self, mock_translate):
+        """Test translation uses current UI state (unsaved changes) via survey data, not stale DB data"""
+
+        def mock_translate_fn(text, target_lang, user_distinct_id=None):
+            return f"[FR] {text}"
+
+        mock_translate.side_effect = mock_translate_fn
+
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.save()
+
+        # Create saved survey with original text
+        survey = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Original Survey",
+            type="popover",
+            questions=[{"type": "open", "question": "What do you think?"}],
+        )
+
+        # User edited the question but hasn't saved yet - pass updated data
+        updated_survey_data = {
+            "id": str(survey.id),
+            "name": "Original Survey",
+            "questions": [{"type": "open", "question": "How satisfied are you with our product?"}],  # Changed!
+        }
+
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/surveys/{survey.id}/translate/",
+            data={"target_language": "fr", "survey": updated_survey_data},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        # Should translate the UPDATED question, not the old one
+        assert (
+            data["translations"]["questions"][0]["question"] == "[FR] How satisfied are you with our product?"
+        )  # New text
+
+        # DB should still have old text (not saved)
+        survey.refresh_from_db()
+        assert survey.questions[0]["question"] == "What do you think?"  # Old text
+
     def test_bulk_duplicate_preserves_question_ids(self):
         """Test that question IDs are reset (set to None) in duplicated surveys"""
         response = self.client.post(

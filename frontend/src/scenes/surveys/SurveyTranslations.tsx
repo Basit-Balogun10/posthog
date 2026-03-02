@@ -1,5 +1,5 @@
-import React from 'react'
 import { useActions, useValues } from 'kea'
+import React from 'react'
 
 import { IconMagicWand, IconTrash } from '@posthog/icons'
 import { LemonButton, LemonDialog, LemonInputSelect } from '@posthog/lemon-ui'
@@ -39,8 +39,9 @@ export const COMMON_LANGUAGES = [
 
 export function SurveyTranslations(): JSX.Element {
     const { survey, editingLanguage, translatingLanguage } = useValues(surveyLogic)
-    const { setSurveyValue, setEditingLanguage, autoTranslateSurvey, autoTranslateSurveyBatch } = useActions(surveyLogic)
-    
+    const { setSurveyValue, setEditingLanguage, autoTranslateSurvey, autoTranslateSurveyBatch } =
+        useActions(surveyLogic)
+
     const [selectedFields, setSelectedFields] = React.useState<string[]>([])
     const [batchLanguages, setBatchLanguages] = React.useState<string[]>([])
 
@@ -157,7 +158,7 @@ export function SurveyTranslations(): JSX.Element {
                             placeholder="Select languages to translate"
                             value={batchLanguages}
                         />
-                        
+
                         <div className="space-y-1">
                             <label className="text-xs font-semibold">Fields to translate (optional)</label>
                             <div className="grid grid-cols-2 gap-2">
@@ -199,8 +200,8 @@ export function SurveyTranslations(): JSX.Element {
                                 !survey.id
                                     ? 'Save the survey first before translating'
                                     : batchLanguages.length === 0
-                                    ? 'Select at least one language'
-                                    : undefined
+                                      ? 'Select at least one language'
+                                      : undefined
                             }
                         >
                             Translate {batchLanguages.length} language{batchLanguages.length !== 1 ? 's' : ''}
@@ -239,7 +240,6 @@ export function SurveyTranslations(): JSX.Element {
                                 }}
                                 loading={translatingLanguage === lang}
                                 tooltip="Auto-translate using AI"
-                                disabledReason={!survey.id ? 'Save the survey first before translating' : undefined}
                             />
                             <LemonButton
                                 icon={<IconTrash />}
