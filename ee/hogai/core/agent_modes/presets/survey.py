@@ -78,6 +78,25 @@ The assistant used the todo list because:
 4. The edit_survey tool is used with end_date="now" to stop and archived=true to archive
 """.strip()
 
+POSITIVE_EXAMPLE_TRANSLATE_SURVEY = """
+User: Translate the NPS survey to Spanish
+Assistant: I'll first search for the NPS survey, then translate it to Spanish.
+*Creates todo list with the following items:*
+1. Search for the NPS survey to get its ID
+2. Translate the survey to Spanish
+*Uses search with kind: "surveys" and query: "NPS"*
+After getting the survey ID, the assistant uses translate_survey with survey_id and target_language: "es"
+""".strip()
+
+POSITIVE_EXAMPLE_TRANSLATE_SURVEY_REASONING = """
+The assistant used the todo list because:
+1. The user wants to translate an existing survey to another language
+2. This requires multiple steps: first find the survey ID, then translate it
+3. The search tool with surveys kind retrieves the survey information
+4. The translate_survey tool uses AI to translate all survey content (questions, descriptions, button text, thank you messages) to the target language
+5. The translation is added to the survey's translations object without modifying the original content
+""".strip()
+
 
 class SurveyAgentToolkit(AgentToolkit):
     POSITIVE_TODO_EXAMPLES = [
@@ -97,13 +116,22 @@ class SurveyAgentToolkit(AgentToolkit):
             example=POSITIVE_EXAMPLE_EDIT_SURVEY,
             reasoning=POSITIVE_EXAMPLE_EDIT_SURVEY_REASONING,
         ),
+        TodoWriteExample(
+            example=POSITIVE_EXAMPLE_TRANSLATE_SURVEY,
+            reasoning=POSITIVE_EXAMPLE_TRANSLATE_SURVEY_REASONING,
+        ),
     ]
 
     @property
     def tools(self) -> list[type["MaxTool"]]:
-        from products.surveys.backend.max_tools import CreateSurveyTool, EditSurveyTool, SurveyAnalysisTool
+        from products.surveys.backend.max_tools import (
+            CreateSurveyTool,
+            EditSurveyTool,
+            SurveyAnalysisTool,
+            TranslateSurveyTool,
+        )
 
-        tools: list[type[MaxTool]] = [CreateSurveyTool, EditSurveyTool, SurveyAnalysisTool]
+        tools: list[type[MaxTool]] = [CreateSurveyTool, EditSurveyTool, SurveyAnalysisTool, TranslateSurveyTool]
         return tools
 
 
