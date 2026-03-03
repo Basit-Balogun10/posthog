@@ -4515,7 +4515,8 @@ const api = {
         },
         async translate(
             surveyId: Survey['id'],
-            targetLanguage: string
+            targetLanguage: string,
+            fields?: string[]
         ): Promise<{
             translations: any
             target_language: string
@@ -4523,7 +4524,35 @@ const api = {
             return await new ApiRequest()
                 .survey(surveyId)
                 .withAction('translate')
-                .create({ data: { target_language: targetLanguage } })
+                .create({ data: { target_language: targetLanguage, fields } })
+        },
+        async translateQuestion(
+            surveyId: Survey['id'],
+            questionIndex: number,
+            targetLanguage: string,
+            fields?: string[]
+        ): Promise<{
+            question_index: number
+            target_language: string
+            translations: any
+        }> {
+            return await new ApiRequest()
+                .survey(surveyId)
+                .withAction('translate-question')
+                .create({ data: { question_index: questionIndex, target_language: targetLanguage, fields } })
+        },
+        async translateBatch(
+            surveyId: Survey['id'],
+            targetLanguages: string[],
+            fields?: string[]
+        ): Promise<{
+            translations: Record<string, any>
+            errors: Record<string, string>
+        }> {
+            return await new ApiRequest()
+                .survey(surveyId)
+                .withAction('translate-batch')
+                .create({ data: { target_languages: targetLanguages, fields } })
         },
     },
 

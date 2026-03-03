@@ -227,6 +227,35 @@ class SurveySerializer(UserAccessControlSerializerMixin, serializers.ModelSerial
         return get_survey_conditions_with_actions(survey)
 
 
+# Serializers for translation endpoints
+class TranslateSerializer(serializers.Serializer):
+    target_language = serializers.CharField(required=True)
+    fields = serializers.ListField(child=serializers.CharField(), required=False, allow_null=True)
+
+
+class TranslateQuestionSerializer(serializers.Serializer):
+    question_index = serializers.IntegerField(required=True)
+    target_language = serializers.CharField(required=True)
+    fields = serializers.ListField(child=serializers.CharField(), required=False, allow_null=True)
+
+    def validate_question_index(self, value):
+        if value < 0:
+            raise serializers.ValidationError("Invalid question index")
+        return value
+
+
+class TranslateBatchSerializer(serializers.Serializer):
+    target_languages = serializers.ListField(child=serializers.CharField(), required=True, allow_empty=False)
+    fields = serializers.ListField(child=serializers.CharField(), required=False, allow_null=True)
+
+    def validate_target_languages(self, value):
+        if not value:
+            raise serializers.ValidationError("At least one language is required")
+        if not isinstance(value, list):
+            raise serializers.ValidationError("target_languages must be an array")
+        return value
+
+
 class SurveySerializerCreateUpdateOnly(serializers.ModelSerializer):
     linked_flag = MinimalFeatureFlagSerializer(read_only=True)
     linked_flag_id = serializers.IntegerField(required=False, write_only=True, allow_null=True)
@@ -2104,15 +2133,16 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                 "AI data processing must be approved by your organization before using translation"
             )
 
+        # Validate request data
+        serializer = TranslateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
         survey = self.get_object()
         user = cast(User, request.user)
 
-        target_language = request.data.get("target_language")
-        if not target_language:
-            raise exceptions.ValidationError({"target_language": "This field is required"})
-
+        target_language = serializer.validated_data["target_language"]
         # Optional: specific fields to translate (for partial translation)
-        fields_to_translate = request.data.get("fields")  # e.g., ["question", "description", "choices"]
+        fields_to_translate = serializer.validated_data.get("fields")  # e.g., ["question", "description", "choices"]
 
         # Import here to avoid circular dependency and keep translation logic separate
         from products.llm_analytics.backend.translation.llm import translate_text
@@ -2124,8 +2154,16 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
             def should_translate_field(field_name: str) -> bool:
                 return fields_to_translate is None or field_name in fields_to_translate
 
+            # Determine if we should process questions at all (if any question field is in fields_to_translate)
+            question_fields = ["question", "description", "buttonText", "choices", "link"]
+            should_process_questions = (
+                fields_to_translate is None
+                or "questions" in fields_to_translate
+                or any(field in fields_to_translate for field in question_fields)
+            )
+
             # Translate questions (most complex part)
-            if survey.questions and should_translate_field("questions"):
+            if survey.questions and should_process_questions:
                 translated_questions = []
                 for question in survey.questions:
                     translated_question = {}
@@ -2249,21 +2287,19 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                 "AI data processing must be approved by your organization before using translation"
             )
 
+        # Validate request data
+        serializer = TranslateQuestionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
         survey = self.get_object()
         user = cast(User, request.user)
 
-        question_index = request.data.get("question_index")
-        if question_index is None:
-            raise exceptions.ValidationError({"question_index": "This field is required"})
-
-        target_language = request.data.get("target_language")
-        if not target_language:
-            raise exceptions.ValidationError({"target_language": "This field is required"})
-
+        question_index = serializer.validated_data["question_index"]
+        target_language = serializer.validated_data["target_language"]
         # Optional: specific fields to translate
-        fields_to_translate = request.data.get("fields")  # e.g., ["question", "description", "choices"]
+        fields_to_translate = serializer.validated_data.get("fields")  # e.g., ["question", "description", "choices"]
 
-        if not survey.questions or question_index < 0 or question_index >= len(survey.questions):
+        if not survey.questions or question_index >= len(survey.questions):
             raise exceptions.ValidationError(
                 {"question_index": f"Invalid question index. Survey has {len(survey.questions or [])} questions."}
             )
@@ -2372,18 +2408,16 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                 "AI data processing must be approved by your organization before using translation"
             )
 
+        # Validate request data
+        serializer = TranslateBatchSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
         survey = self.get_object()
         user = cast(User, request.user)
 
-        target_languages = request.data.get("target_languages")
-        if not target_languages or not isinstance(target_languages, list):
-            raise exceptions.ValidationError({"target_languages": "This field is required and must be an array"})
-
-        if len(target_languages) == 0:
-            raise exceptions.ValidationError({"target_languages": "At least one language is required"})
-
+        target_languages = serializer.validated_data["target_languages"]
         # Optional: specific fields to translate
-        fields_to_translate = request.data.get("fields")
+        fields_to_translate = serializer.validated_data.get("fields")
 
         import asyncio
 

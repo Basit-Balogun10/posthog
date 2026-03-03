@@ -556,9 +556,26 @@ export const surveyLogic = kea<surveyLogicType>([
             notificationId,
             enabled,
         }),
-        autoTranslateSurvey: (targetLanguage: string) => ({ targetLanguage }),
+        autoTranslateSurvey: (targetLanguage: string, fields?: string[]) => ({ targetLanguage, fields }),
         autoTranslateSurveySuccess: (translations: any, targetLanguage: string) => ({ translations, targetLanguage }),
         autoTranslateSurveyFailure: (error: string) => ({ error }),
+        autoTranslateSurveyQuestion: (questionIndex: number, targetLanguage: string, fields?: string[]) => ({
+            questionIndex,
+            targetLanguage,
+            fields,
+        }),
+        autoTranslateSurveyQuestionSuccess: (questionIndex: number, translations: any, targetLanguage: string) => ({
+            questionIndex,
+            translations,
+            targetLanguage,
+        }),
+        autoTranslateSurveyQuestionFailure: (error: string) => ({ error }),
+        autoTranslateSurveyBatch: (targetLanguages: string[], fields?: string[]) => ({ targetLanguages, fields }),
+        autoTranslateSurveyBatchSuccess: (translations: Record<string, any>, errors: Record<string, string>) => ({
+            translations,
+            errors,
+        }),
+        autoTranslateSurveyBatchFailure: (error: string) => ({ error }),
     }),
     loaders(({ props, actions, values }) => ({
         surveyHeadline: [
