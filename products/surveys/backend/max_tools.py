@@ -752,8 +752,8 @@ class TranslateSurveyToolArgs(BaseModel):
         description="Specific field path for surgical translation (e.g., 'questions.0.choices.2' for third choice in first question). When provided, only this field is translated.",
     )
     only_changed_fields: bool = Field(
-        default=False,
-        description="If true, only retranslate fields that changed since last translation (smart retranslation). Compares with _source snapshots.",
+        default=True,
+        description="Smart retranslation (enabled by default): Only retranslate fields where base language changed since last translation. Compares with _source snapshots. Set to False to force full retranslation.",
     )
 
 
@@ -1053,30 +1053,41 @@ class TranslateSurveyTool(MaxTool):
                         question_translation["question"] = await sync_to_async(translate_text)(
                             question["question"], target_language, user_distinct_id=user.distinct_id
                         )
-                        if not only_changed_fields:
-                            question_translation.setdefault("_source", {})["question"] = question["question"]
+                        # ALWAYS save snapshot when translating (not just when only_changed_fields=False)
+                        question_translation.setdefault("_source", {})["question"] = question["question"]
                     elif existing_q.get("question"):
+                        # Preserve existing translation AND its snapshot
                         question_translation["question"] = existing_q["question"]
+                        if existing_q.get("_source", {}).get("question"):
+                            question_translation.setdefault("_source", {})["question"] = existing_q["_source"][
+                                "question"
+                            ]
 
                 if "description" in question and should_translate_field("description"):
                     if field_changed("description", question.get("description")):
                         question_translation["description"] = await sync_to_async(translate_text)(
                             question["description"], target_language, user_distinct_id=user.distinct_id
                         )
-                        if not only_changed_fields:
-                            question_translation.setdefault("_source", {})["description"] = question["description"]
+                        question_translation.setdefault("_source", {})["description"] = question["description"]
                     elif existing_q.get("description"):
                         question_translation["description"] = existing_q["description"]
+                        if existing_q.get("_source", {}).get("description"):
+                            question_translation.setdefault("_source", {})["description"] = existing_q["_source"][
+                                "description"
+                            ]
 
                 if "buttonText" in question and should_translate_field("buttonText"):
                     if field_changed("buttonText", question.get("buttonText")):
                         question_translation["buttonText"] = await sync_to_async(translate_text)(
                             question["buttonText"], target_language, user_distinct_id=user.distinct_id
                         )
-                        if not only_changed_fields:
-                            question_translation.setdefault("_source", {})["buttonText"] = question["buttonText"]
+                        question_translation.setdefault("_source", {})["buttonText"] = question["buttonText"]
                     elif existing_q.get("buttonText"):
                         question_translation["buttonText"] = existing_q["buttonText"]
+                        if existing_q.get("_source", {}).get("buttonText"):
+                            question_translation.setdefault("_source", {})["buttonText"] = existing_q["_source"][
+                                "buttonText"
+                            ]
 
                 if (
                     "choices" in question
@@ -1092,20 +1103,22 @@ class TranslateSurveyTool(MaxTool):
                             )
                             choices_translation.append(translated_choice)
                         question_translation["choices"] = choices_translation
-                        if not only_changed_fields:
-                            question_translation.setdefault("_source", {})["choices"] = choices_str
+                        question_translation.setdefault("_source", {})["choices"] = choices_str
                     elif existing_q.get("choices"):
                         question_translation["choices"] = existing_q["choices"]
+                        if existing_q.get("_source", {}).get("choices"):
+                            question_translation.setdefault("_source", {})["choices"] = existing_q["_source"]["choices"]
 
                 if "link" in question and should_translate_field("link"):
                     if field_changed("link", question.get("link")):
                         question_translation["link"] = await sync_to_async(translate_text)(
                             question["link"], target_language, user_distinct_id=user.distinct_id
                         )
-                        if not only_changed_fields:
-                            question_translation.setdefault("_source", {})["link"] = question["link"]
+                        question_translation.setdefault("_source", {})["link"] = question["link"]
                     elif existing_q.get("link"):
                         question_translation["link"] = existing_q["link"]
+                        if existing_q.get("_source", {}).get("link"):
+                            question_translation.setdefault("_source", {})["link"] = existing_q["_source"]["link"]
 
                 translated_questions.append(question_translation)
 
@@ -1133,26 +1146,32 @@ class TranslateSurveyTool(MaxTool):
                     appearance_translation["thankYouMessageHeader"] = await sync_to_async(translate_text)(
                         appearance["thankYouMessageHeader"], target_language, user_distinct_id=user.distinct_id
                     )
-                    if not only_changed_fields:
-                        appearance_translation.setdefault("_source", {})["thankYouMessageHeader"] = appearance[
-                            "thankYouMessageHeader"
-                        ]
+                    appearance_translation.setdefault("_source", {})["thankYouMessageHeader"] = appearance[
+                        "thankYouMessageHeader"
+                    ]
                 elif existing_appearance.get("thankYouMessageHeader"):
                     appearance_translation["thankYouMessageHeader"] = existing_appearance["thankYouMessageHeader"]
+                    if existing_appearance.get("_source", {}).get("thankYouMessageHeader"):
+                        appearance_translation.setdefault("_source", {})["thankYouMessageHeader"] = existing_appearance[
+                            "_source"
+                        ]["thankYouMessageHeader"]
 
             if "thankYouMessageDescription" in appearance:
                 if appearance_field_changed("thankYouMessageDescription", appearance.get("thankYouMessageDescription")):
                     appearance_translation["thankYouMessageDescription"] = await sync_to_async(translate_text)(
                         appearance["thankYouMessageDescription"], target_language, user_distinct_id=user.distinct_id
                     )
-                    if not only_changed_fields:
-                        appearance_translation.setdefault("_source", {})["thankYouMessageDescription"] = appearance[
-                            "thankYouMessageDescription"
-                        ]
+                    appearance_translation.setdefault("_source", {})["thankYouMessageDescription"] = appearance[
+                        "thankYouMessageDescription"
+                    ]
                 elif existing_appearance.get("thankYouMessageDescription"):
                     appearance_translation["thankYouMessageDescription"] = existing_appearance[
                         "thankYouMessageDescription"
                     ]
+                    if existing_appearance.get("_source", {}).get("thankYouMessageDescription"):
+                        appearance_translation.setdefault("_source", {})["thankYouMessageDescription"] = (
+                            existing_appearance["_source"]["thankYouMessageDescription"]
+                        )
 
             if "thankYouMessageCloseButtonText" in appearance:
                 if appearance_field_changed(
@@ -1161,14 +1180,17 @@ class TranslateSurveyTool(MaxTool):
                     appearance_translation["thankYouMessageCloseButtonText"] = await sync_to_async(translate_text)(
                         appearance["thankYouMessageCloseButtonText"], target_language, user_distinct_id=user.distinct_id
                     )
-                    if not only_changed_fields:
-                        appearance_translation.setdefault("_source", {})["thankYouMessageCloseButtonText"] = appearance[
-                            "thankYouMessageCloseButtonText"
-                        ]
+                    appearance_translation.setdefault("_source", {})["thankYouMessageCloseButtonText"] = appearance[
+                        "thankYouMessageCloseButtonText"
+                    ]
                 elif existing_appearance.get("thankYouMessageCloseButtonText"):
                     appearance_translation["thankYouMessageCloseButtonText"] = existing_appearance[
                         "thankYouMessageCloseButtonText"
                     ]
+                    if existing_appearance.get("_source", {}).get("thankYouMessageCloseButtonText"):
+                        appearance_translation.setdefault("_source", {})["thankYouMessageCloseButtonText"] = (
+                            existing_appearance["_source"]["thankYouMessageCloseButtonText"]
+                        )
 
             if appearance_translation:
                 translations["appearance"] = appearance_translation
