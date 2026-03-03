@@ -4,9 +4,19 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useActions, useValues } from 'kea'
 import { Group } from 'kea-forms'
+import { useState } from 'react'
 
 import { IconMagicWand, IconPlusSmall, IconTrash } from '@posthog/icons'
-import { LemonButton, LemonCheckbox, LemonDialog, LemonInput, LemonInputSelect, LemonSelect, LemonTag } from '@posthog/lemon-ui'
+import {
+    LemonButton,
+    LemonCheckbox,
+    LemonDialog,
+    LemonInput,
+    LemonInputSelect,
+    LemonSelect,
+    LemonTag,
+    Tooltip,
+} from '@posthog/lemon-ui'
 
 import { LemonField } from 'lib/lemon-ui/LemonField'
 import { QuestionBranchingInput } from 'scenes/surveys/components/question-branching/QuestionBranchingInput'
@@ -37,6 +47,70 @@ type SurveyQuestionHeaderProps = {
 }
 
 const MAX_NUMBER_OF_OPTIONS = 15
+
+// Wrapper component that adds hover-based wand icon for per-field translation
+function TranslatableFieldWrapper({
+    children,
+    fieldPath,
+    fieldValue,
+    disabled,
+}: {
+    children: React.ReactElement
+    fieldPath: string
+    fieldValue: string
+    disabled?: boolean
+}): JSX.Element {
+    const [isHovered, setIsHovered] = useState(false)
+    const { translateField } = useActions(surveyLogic)
+    const { translatingLanguage, survey, editingLanguage } = useValues(surveyLogic)
+
+    const isTranslating = translatingLanguage !== null && translatingLanguage !== 'batch'
+
+    // Only show wand icon when editing a translation (not the original)
+    const showWandIcon = editingLanguage !== null
+
+    // Get current translation for context
+    const getCurrentTranslation = (): string | undefined => {
+        if (!editingLanguage || !fieldPath || !survey.translations?.[editingLanguage]) {
+            return undefined
+        }
+        // Parse fieldPath to get the translated value
+        // fieldPath format: "questions.0.question" or "appearance.thankYouMessageHeader"
+        const parts = fieldPath.split('.')
+        let current: any = survey.translations[editingLanguage]
+        for (const part of parts) {
+            if (current && typeof current === 'object') {
+                current = current[part]
+            } else {
+                break
+            }
+        }
+        return typeof current === 'string' ? current : undefined
+    }
+
+    return (
+        <div className="relative" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
+            {children}
+            {isHovered && !disabled && showWandIcon && fieldValue && editingLanguage && (
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 z-10">
+                    <Tooltip title={`Retranslate this field to ${editingLanguage}`}>
+                        <LemonButton
+                            icon={<IconMagicWand />}
+                            size="xsmall"
+                            type="secondary"
+                            loading={isTranslating}
+                            onClick={() => {
+                                const currentTranslation = getCurrentTranslation()
+                                translateField(fieldPath, fieldValue, editingLanguage, currentTranslation)
+                            }}
+                            disabledReason={!survey.id ? 'Save the survey first' : undefined}
+                        />
+                    </Tooltip>
+                </div>
+            )}
+        </div>
+    )
+}
 
 export function SurveyEditQuestionHeader({
     index,
@@ -97,47 +171,47 @@ export function SurveyEditQuestionHeader({
                     />
                 </LemonInputSelect>
                 {survey.questions.length > 1 && (
-                <LemonButton
-                    icon={<IconTrash />}
-                    size="xsmall"
-                    data-attr={`delete-survey-question-${index}`}
-                    onClick={(e) => {
-                        const deleteQuestion = (): void => {
-                            e.stopPropagation()
-                            setSelectedPageIndex(index <= 0 ? 0 : index - 1)
-                            setSurveyValue(
-                                'questions',
-                                survey.questions.filter((_, i) => i !== index)
-                            )
-                        }
+                    <LemonButton
+                        icon={<IconTrash />}
+                        size="xsmall"
+                        data-attr={`delete-survey-question-${index}`}
+                        onClick={(e) => {
+                            const deleteQuestion = (): void => {
+                                e.stopPropagation()
+                                setSelectedPageIndex(index <= 0 ? 0 : index - 1)
+                                setSurveyValue(
+                                    'questions',
+                                    survey.questions.filter((_, i) => i !== index)
+                                )
+                            }
 
-                        if (hasBranchingLogic) {
-                            LemonDialog.open({
-                                title: 'Your survey has active branching logic',
-                                description: (
-                                    <p className="py-2">
-                                        Deleting the question will remove your branching logic. Are you sure you want to
-                                        continue?
-                                    </p>
-                                ),
-                                primaryButton: {
-                                    children: 'Continue',
-                                    status: 'danger',
-                                    onClick: () => {
-                                        deleteBranchingLogic()
-                                        deleteQuestion()
+                            if (hasBranchingLogic) {
+                                LemonDialog.open({
+                                    title: 'Your survey has active branching logic',
+                                    description: (
+                                        <p className="py-2">
+                                            Deleting the question will remove your branching logic. Are you sure you
+                                            want to continue?
+                                        </p>
+                                    ),
+                                    primaryButton: {
+                                        children: 'Continue',
+                                        status: 'danger',
+                                        onClick: () => {
+                                            deleteBranchingLogic()
+                                            deleteQuestion()
+                                        },
                                     },
-                                },
-                                secondaryButton: {
-                                    children: 'Cancel',
-                                },
-                            })
-                        } else {
-                            deleteQuestion()
-                        }
-                    }}
-                    tooltipPlacement="top-end"
-                />
+                                    secondaryButton: {
+                                        children: 'Cancel',
+                                    },
+                                })
+                            } else {
+                                deleteQuestion()
+                            }
+                        }}
+                        tooltipPlacement="top-end"
+                    />
                 )}
             </div>
         </div>
@@ -265,19 +339,31 @@ export function SurveyEditQuestionGroup({ index, question }: { index: number; qu
                     />
                 </LemonField>
                 <LemonField name="question" label="Label">
-                    <LemonInput data-attr={`survey-question-label-${index}`} value={question.question} />
+                    {({ value }) => (
+                        <TranslatableFieldWrapper
+                            fieldPath={`questions.${index}.question`}
+                            fieldValue={question.question}
+                        >
+                            <LemonInput data-attr={`survey-question-label-${index}`} value={value} />
+                        </TranslatableFieldWrapper>
+                    )}
                 </LemonField>
                 <LemonField name="description" label="Description (optional)">
                     {({ value, onChange }) => (
-                        <HTMLEditor
-                            value={value}
-                            onChange={(val) => {
-                                onChange(val)
-                                handleQuestionValueChange('description', val)
-                            }}
-                            onTabChange={handleTabChange}
-                            activeTab={initialDescriptionContentType}
-                        />
+                        <TranslatableFieldWrapper
+                            fieldPath={`questions.${index}.description`}
+                            fieldValue={question.description || ''}
+                        >
+                            <HTMLEditor
+                                value={value}
+                                onChange={(val) => {
+                                    onChange(val)
+                                    handleQuestionValueChange('description', val)
+                                }}
+                                onTabChange={handleTabChange}
+                                activeTab={initialDescriptionContentType}
+                            />
+                        </TranslatableFieldWrapper>
                     )}
                 </LemonField>
                 {survey.questions.length > 1 && (
@@ -371,31 +457,36 @@ export function SurveyEditQuestionGroup({ index, question }: { index: number; qu
                                 <LemonField name="choices" label="Choices">
                                     {({ value, onChange }) => (
                                         <div className="flex flex-col gap-2">
-                                            {(value || []).map((choice: string, index: number) => {
-                                                const isOpenChoice = hasOpenChoice && index === value?.length - 1
+                                            {(value || []).map((choice: string, choiceIndex: number) => {
+                                                const isOpenChoice = hasOpenChoice && choiceIndex === value?.length - 1
                                                 return (
-                                                    <div className="flex flex-row gap-2 relative" key={index}>
-                                                        <LemonInput
-                                                            value={choice}
-                                                            fullWidth
-                                                            onChange={(val) => {
-                                                                const newChoices = [...value]
-                                                                newChoices[index] = val
-                                                                onChange(newChoices)
-                                                            }}
-                                                            suffix={
-                                                                isOpenChoice && (
-                                                                    <LemonTag type="highlight">open-ended</LemonTag>
-                                                                )
-                                                            }
-                                                        />
+                                                    <div className="flex flex-row gap-2 relative" key={choiceIndex}>
+                                                        <TranslatableFieldWrapper
+                                                            fieldPath={`questions.${index}.choices.${choiceIndex}`}
+                                                            fieldValue={choice}
+                                                        >
+                                                            <LemonInput
+                                                                value={choice}
+                                                                fullWidth
+                                                                onChange={(val) => {
+                                                                    const newChoices = [...value]
+                                                                    newChoices[choiceIndex] = val
+                                                                    onChange(newChoices)
+                                                                }}
+                                                                suffix={
+                                                                    isOpenChoice && (
+                                                                        <LemonTag type="highlight">open-ended</LemonTag>
+                                                                    )
+                                                                }
+                                                            />
+                                                        </TranslatableFieldWrapper>
                                                         <LemonButton
                                                             icon={<IconTrash />}
                                                             size="xsmall"
                                                             noPadding
                                                             onClick={() => {
                                                                 const newChoices = [...value]
-                                                                newChoices.splice(index, 1)
+                                                                newChoices.splice(choiceIndex, 1)
                                                                 onChange(newChoices)
                                                                 if (isOpenChoice) {
                                                                     toggleHasOpenChoice(false)
@@ -481,14 +572,19 @@ export function SurveyEditQuestionGroup({ index, question }: { index: number; qu
                 >
                     <>
                         {(!canSkipSubmitButton || (canSkipSubmitButton && !question.skipSubmitButton)) && (
-                            <LemonInput
-                                value={
-                                    question.buttonText === undefined
-                                        ? (survey.appearance?.submitButtonText ?? 'Submit')
-                                        : question.buttonText
-                                }
-                                onChange={(val) => handleQuestionValueChange('buttonText', val)}
-                            />
+                            <TranslatableFieldWrapper
+                                fieldPath={`questions.${index}.buttonText`}
+                                fieldValue={question.buttonText || survey.appearance?.submitButtonText || 'Submit'}
+                            >
+                                <LemonInput
+                                    value={
+                                        question.buttonText === undefined
+                                            ? (survey.appearance?.submitButtonText ?? 'Submit')
+                                            : question.buttonText
+                                    }
+                                    onChange={(val) => handleQuestionValueChange('buttonText', val)}
+                                />
+                            </TranslatableFieldWrapper>
                         )}
                         {canSkipSubmitButton && (
                             <LemonField
