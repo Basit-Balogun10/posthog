@@ -667,8 +667,11 @@ SURVEY_TRANSLATE_TOOL_DESCRIPTION = dedent("""
     - User mentions translating survey content to Spanish, French, etc.
     - User wants to localize a survey for different markets/regions
     - User wants to translate a specific question only
+    - User wants to translate multiple specific questions
     - User wants to translate to multiple languages at once
     - User wants to translate only specific fields (e.g., just questions, not descriptions)
+    - User wants to retranslate only the parts they changed (smart retranslation)
+    - User wants to translate a specific field (e.g., one choice option)
 
     # Finding the Survey
     First use the search tool with kind="surveys" to find the survey ID, then use this tool.
@@ -683,9 +686,16 @@ SURVEY_TRANSLATE_TOOL_DESCRIPTION = dedent("""
     # Translation Options
     - **Full survey translation**: Provide just survey_id and target_language
     - **Single question**: Use question_index (0-based) to translate one question
+    - **Multiple questions**: Use question_indices array (e.g., [0, 2, 4] for questions 1, 3, 5)
     - **Multiple languages**: Use target_languages array to translate to many languages at once
     - **Specific fields**: Use fields array to translate only certain fields
       (e.g., ['question', 'choices'] to skip descriptions and button text)
+    - **Smart retranslation**: Set only_changed_fields=True to retranslate only fields that changed
+    - **Per-field targeting**: Use field_path (e.g., 'questions.0.choices.2') for surgical translation
+
+    # Smart Retranslation
+    When only_changed_fields=True, the tool compares current field values with _source snapshots
+    stored from previous translations. Only fields that changed are retranslated, saving time and cost.
 
     # How it works
     - The tool uses AI to translate survey questions, descriptions, button text, and thank you messages
@@ -698,6 +708,9 @@ SURVEY_TRANSLATE_TOOL_DESCRIPTION = dedent("""
     - Use standard language codes (e.g., 'es' for Spanish, 'fr' for French)
     - You cannot translate a survey that doesn't belong to your team
     - The survey must be saved (have an ID) before it can be translated
+    - Cannot use both question_index and question_indices at the same time
+    - Smart retranslation requires previous translations with _source snapshots
+```
     """).strip()
 
 
@@ -713,11 +726,23 @@ class TranslateSurveyToolArgs(BaseModel):
     )
     question_index: int | None = Field(
         default=None,
-        description="Zero-based index of a specific question to translate. If provided, only that question is translated.",
+        description="Zero-based index of a specific question to translate. If provided, only that question is translated. Cannot be used with question_indices.",
+    )
+    question_indices: list[int] | None = Field(
+        default=None,
+        description="Array of question indices to translate (e.g., [0, 2, 4] for questions 1, 3, and 5). Cannot be used with question_index.",
     )
     fields: list[str] | None = Field(
         default=None,
         description="Array of field names to translate. Options: 'question', 'description', 'buttonText', 'choices', 'link', 'appearance'. If not provided, all fields are translated.",
+    )
+    field_path: str | None = Field(
+        default=None,
+        description="Specific field path for surgical translation (e.g., 'questions.0.choices.2' for third choice in first question). When provided, only this field is translated.",
+    )
+    only_changed_fields: bool = Field(
+        default=False,
+        description="If true, only retranslate fields that changed since last translation (smart retranslation). Compares with _source snapshots.",
     )
 
 
@@ -739,13 +764,17 @@ class TranslateSurveyTool(MaxTool):
         target_language: str | None = None,
         target_languages: list[str] | None = None,
         question_index: int | None = None,
+        question_indices: list[int] | None = None,
         fields: list[str] | None = None,
+        field_path: str | None = None,
+        only_changed_fields: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """
         Translate a survey to the target language(s) using AI.
-        Supports single/batch translation, per-question translation, and field filtering.
+        Supports single/batch translation, per-question translation, multi-question selection,
+        field filtering, smart retranslation, and per-field targeting.
         """
-        # Validate that either target_language or target_languages is provided
+        # Validate parameters
         if not target_language and not target_languages:
             return "You must provide either 'target_language' or 'target_languages'.", {
                 "error": "invalid_params",
@@ -756,6 +785,12 @@ class TranslateSurveyTool(MaxTool):
             return "Provide either 'target_language' or 'target_languages', not both.", {
                 "error": "invalid_params",
                 "details": "Cannot use both single and batch translation modes",
+            }
+
+        if question_index is not None and question_indices is not None:
+            return "Provide either 'question_index' or 'question_indices', not both.", {
+                "error": "invalid_params",
+                "details": "Cannot use both single and multi-question modes",
             }
 
         try:
@@ -786,6 +821,33 @@ class TranslateSurveyTool(MaxTool):
             def should_translate_field(field_name: str) -> bool:
                 return fields is None or field_name in fields
 
+            # Handle per-field targeting (uses translate_field endpoint)
+            if field_path:
+                if not target_language:
+                    return "Per-field targeting requires a single target_language, not target_languages.", {
+                        "error": "invalid_params",
+                        "details": "Use target_language with field_path",
+                    }
+
+                # Parse field path (e.g., "questions.0.choices.2")
+                try:
+                    result = await self._translate_field(survey, field_path, target_language, user)
+
+                    await sync_to_async(self._report_user_action)("per-field survey translation generated")
+
+                    return f"Field '{field_path}' in survey '{survey_name}' translated to {target_language}!", {
+                        "survey_id": survey_id,
+                        "survey_name": survey_name,
+                        "field_path": field_path,
+                        "target_language": target_language,
+                        "translation": result,
+                    }
+                except Exception as e:
+                    return f"Failed to translate field: {str(e)}", {
+                        "error": "translation_failed",
+                        "details": str(e),
+                    }
+
             # If batch translation to multiple languages
             if target_languages:
                 all_translations = {}
@@ -794,7 +856,13 @@ class TranslateSurveyTool(MaxTool):
                 for lang in target_languages:
                     try:
                         lang_translations = await self._translate_survey(
-                            survey, lang, user, question_index, should_translate_field
+                            survey,
+                            lang,
+                            user,
+                            question_index,
+                            question_indices,
+                            should_translate_field,
+                            only_changed_fields,
                         )
                         all_translations[lang] = lang_translations
                     except Exception as e:
@@ -818,16 +886,29 @@ class TranslateSurveyTool(MaxTool):
 
             # Single language translation
             target_lang = target_language or target_languages[0]  # type: ignore
-            translations = await self._translate_survey(survey, target_lang, user, question_index, should_translate_field)
+            translations = await self._translate_survey(
+                survey, target_lang, user, question_index, question_indices, should_translate_field, only_changed_fields
+            )
 
             await sync_to_async(self._report_user_action)("survey translation generated")
 
-            question_msg = f" (question {question_index + 1})" if question_index is not None else ""
-            return f"Survey '{survey_name}'{question_msg} successfully translated to {target_lang}!", {
+            # Build descriptive message
+            if question_indices:
+                question_msg = f" (questions {', '.join(str(i + 1) for i in question_indices)})"
+            elif question_index is not None:
+                question_msg = f" (question {question_index + 1})"
+            else:
+                question_msg = ""
+
+            smart_msg = " (smart retranslation)" if only_changed_fields else ""
+
+            return f"Survey '{survey_name}'{question_msg} successfully translated to {target_lang}{smart_msg}!", {
                 "survey_id": survey_id,
                 "survey_name": survey_name,
                 "target_language": target_lang,
                 "question_index": question_index,
+                "question_indices": question_indices,
+                "only_changed_fields": only_changed_fields,
                 "translations": translations,
             }
 
@@ -908,76 +989,239 @@ class TranslateSurveyTool(MaxTool):
         target_language: str,
         user: Any,
         question_index: int | None,
+        question_indices: list[int] | None,
         should_translate_field: Any,
+        only_changed_fields: bool = False,
     ) -> dict[str, Any]:
         """Helper method to translate a survey to a single language."""
         from products.llm_analytics.backend.translation.llm import translate_text
 
         translations: dict[str, Any] = {}
-        questions_to_translate = (
-            [survey.questions[question_index]] if question_index is not None else survey.questions
-        )
+
+        # Determine which questions to translate
+        if question_indices is not None:
+            # Multi-question selection
+            questions_to_translate = [survey.questions[i] for i in question_indices if i < len(survey.questions)]
+            questions_indices = question_indices
+        elif question_index is not None:
+            # Single question
+            questions_to_translate = [survey.questions[question_index]]
+            questions_indices = [question_index]
+        else:
+            # All questions
+            questions_to_translate = survey.questions
+            questions_indices = list(range(len(survey.questions)))
+
+        # Get existing translations for smart retranslation
+        existing_translations = {}
+        if only_changed_fields and survey.translations:
+            existing_translations = survey.translations.get(target_language, {})
 
         # Translate questions
         if questions_to_translate:
             translated_questions = []
-            for question in questions_to_translate:
+            for _idx, (question, q_idx) in enumerate(zip(questions_to_translate, questions_indices)):
                 question_translation: dict[str, Any] = {}
 
+                # Get existing translation and _source snapshot for this question
+                existing_q = {}
+                current_source_snapshot = {}
+                if only_changed_fields and existing_translations.get("questions"):
+                    if q_idx < len(existing_translations["questions"]):
+                        existing_q = existing_translations["questions"][q_idx]
+                        current_source_snapshot = existing_q.get("_source", {})
+
+                # Helper to check if field changed (for smart retranslation)
+                def field_changed(field_name: str, current_value: str | None, snapshot=current_source_snapshot) -> bool:
+                    if not only_changed_fields or not snapshot:
+                        return True  # Translate everything if not smart mode or no snapshot
+                    return snapshot.get(field_name) != current_value
+
                 if "question" in question and should_translate_field("question"):
-                    question_translation["question"] = await sync_to_async(translate_text)(
-                        question["question"], target_language, user_distinct_id=user.distinct_id
-                    )
+                    if field_changed("question", question.get("question")):
+                        question_translation["question"] = await sync_to_async(translate_text)(
+                            question["question"], target_language, user_distinct_id=user.distinct_id
+                        )
+                        if not only_changed_fields:
+                            question_translation.setdefault("_source", {})["question"] = question["question"]
+                    elif existing_q.get("question"):
+                        question_translation["question"] = existing_q["question"]
 
                 if "description" in question and should_translate_field("description"):
-                    question_translation["description"] = await sync_to_async(translate_text)(
-                        question["description"], target_language, user_distinct_id=user.distinct_id
-                    )
+                    if field_changed("description", question.get("description")):
+                        question_translation["description"] = await sync_to_async(translate_text)(
+                            question["description"], target_language, user_distinct_id=user.distinct_id
+                        )
+                        if not only_changed_fields:
+                            question_translation.setdefault("_source", {})["description"] = question["description"]
+                    elif existing_q.get("description"):
+                        question_translation["description"] = existing_q["description"]
 
                 if "buttonText" in question and should_translate_field("buttonText"):
-                    question_translation["buttonText"] = await sync_to_async(translate_text)(
-                        question["buttonText"], target_language, user_distinct_id=user.distinct_id
-                    )
-
-                if "choices" in question and isinstance(question["choices"], list) and should_translate_field("choices"):
-                    choices_translation = []
-                    for choice in question["choices"]:
-                        translated_choice = await sync_to_async(translate_text)(
-                            choice, target_language, user_distinct_id=user.distinct_id
+                    if field_changed("buttonText", question.get("buttonText")):
+                        question_translation["buttonText"] = await sync_to_async(translate_text)(
+                            question["buttonText"], target_language, user_distinct_id=user.distinct_id
                         )
-                        choices_translation.append(translated_choice)
-                    question_translation["choices"] = choices_translation
+                        if not only_changed_fields:
+                            question_translation.setdefault("_source", {})["buttonText"] = question["buttonText"]
+                    elif existing_q.get("buttonText"):
+                        question_translation["buttonText"] = existing_q["buttonText"]
+
+                if (
+                    "choices" in question
+                    and isinstance(question["choices"], list)
+                    and should_translate_field("choices")
+                ):
+                    choices_str = ",".join(question["choices"])
+                    if field_changed("choices", choices_str):
+                        choices_translation = []
+                        for choice in question["choices"]:
+                            translated_choice = await sync_to_async(translate_text)(
+                                choice, target_language, user_distinct_id=user.distinct_id
+                            )
+                            choices_translation.append(translated_choice)
+                        question_translation["choices"] = choices_translation
+                        if not only_changed_fields:
+                            question_translation.setdefault("_source", {})["choices"] = choices_str
+                    elif existing_q.get("choices"):
+                        question_translation["choices"] = existing_q["choices"]
 
                 if "link" in question and should_translate_field("link"):
-                    question_translation["link"] = await sync_to_async(translate_text)(
-                        question["link"], target_language, user_distinct_id=user.distinct_id
-                    )
+                    if field_changed("link", question.get("link")):
+                        question_translation["link"] = await sync_to_async(translate_text)(
+                            question["link"], target_language, user_distinct_id=user.distinct_id
+                        )
+                        if not only_changed_fields:
+                            question_translation.setdefault("_source", {})["link"] = question["link"]
+                    elif existing_q.get("link"):
+                        question_translation["link"] = existing_q["link"]
 
                 translated_questions.append(question_translation)
 
             translations["questions"] = translated_questions
 
         # Translate appearance (thank you message) if not doing per-question translation
-        if question_index is None and should_translate_field("appearance"):
+        if question_index is None and question_indices is None and should_translate_field("appearance"):
             appearance = survey.appearance or {}
             appearance_translation: dict[str, Any] = {}
 
+            # Get existing appearance translation for smart retranslation
+            existing_appearance = {}
+            appearance_source = {}
+            if only_changed_fields and existing_translations.get("appearance"):
+                existing_appearance = existing_translations["appearance"]
+                appearance_source = existing_appearance.get("_source", {})
+
+            def appearance_field_changed(field_name: str, current_value: str | None) -> bool:
+                if not only_changed_fields or not appearance_source:
+                    return True
+                return appearance_source.get(field_name) != current_value
+
             if "thankYouMessageHeader" in appearance:
-                appearance_translation["thankYouMessageHeader"] = await sync_to_async(translate_text)(
-                    appearance["thankYouMessageHeader"], target_language, user_distinct_id=user.distinct_id
-                )
+                if appearance_field_changed("thankYouMessageHeader", appearance.get("thankYouMessageHeader")):
+                    appearance_translation["thankYouMessageHeader"] = await sync_to_async(translate_text)(
+                        appearance["thankYouMessageHeader"], target_language, user_distinct_id=user.distinct_id
+                    )
+                    if not only_changed_fields:
+                        appearance_translation.setdefault("_source", {})["thankYouMessageHeader"] = appearance[
+                            "thankYouMessageHeader"
+                        ]
+                elif existing_appearance.get("thankYouMessageHeader"):
+                    appearance_translation["thankYouMessageHeader"] = existing_appearance["thankYouMessageHeader"]
 
             if "thankYouMessageDescription" in appearance:
-                appearance_translation["thankYouMessageDescription"] = await sync_to_async(translate_text)(
-                    appearance["thankYouMessageDescription"], target_language, user_distinct_id=user.distinct_id
-                )
+                if appearance_field_changed("thankYouMessageDescription", appearance.get("thankYouMessageDescription")):
+                    appearance_translation["thankYouMessageDescription"] = await sync_to_async(translate_text)(
+                        appearance["thankYouMessageDescription"], target_language, user_distinct_id=user.distinct_id
+                    )
+                    if not only_changed_fields:
+                        appearance_translation.setdefault("_source", {})["thankYouMessageDescription"] = appearance[
+                            "thankYouMessageDescription"
+                        ]
+                elif existing_appearance.get("thankYouMessageDescription"):
+                    appearance_translation["thankYouMessageDescription"] = existing_appearance[
+                        "thankYouMessageDescription"
+                    ]
 
             if "thankYouMessageCloseButtonText" in appearance:
-                appearance_translation["thankYouMessageCloseButtonText"] = await sync_to_async(translate_text)(
-                    appearance["thankYouMessageCloseButtonText"], target_language, user_distinct_id=user.distinct_id
-                )
+                if appearance_field_changed(
+                    "thankYouMessageCloseButtonText", appearance.get("thankYouMessageCloseButtonText")
+                ):
+                    appearance_translation["thankYouMessageCloseButtonText"] = await sync_to_async(translate_text)(
+                        appearance["thankYouMessageCloseButtonText"], target_language, user_distinct_id=user.distinct_id
+                    )
+                    if not only_changed_fields:
+                        appearance_translation.setdefault("_source", {})["thankYouMessageCloseButtonText"] = appearance[
+                            "thankYouMessageCloseButtonText"
+                        ]
+                elif existing_appearance.get("thankYouMessageCloseButtonText"):
+                    appearance_translation["thankYouMessageCloseButtonText"] = existing_appearance[
+                        "thankYouMessageCloseButtonText"
+                    ]
 
             if appearance_translation:
                 translations["appearance"] = appearance_translation
 
         return translations
+
+    async def _translate_field(
+        self,
+        survey: Survey,
+        field_path: str,
+        target_language: str,
+        user: Any,
+    ) -> str:
+        """Helper method to translate a specific field using field path."""
+        from products.llm_analytics.backend.translation.llm import translate_text
+
+        # Parse field path (e.g., "questions.0.choices.2" or "appearance.thankYouMessageHeader")
+        parts = field_path.split(".")
+
+        if len(parts) < 2:
+            raise ValueError(f"Invalid field path: {field_path}")
+
+        # Navigate to the field value
+        if parts[0] == "questions":
+            if len(parts) < 3:
+                raise ValueError(f"Question field path must include index and field name: {field_path}")
+
+            q_index = int(parts[1])
+            if q_index >= len(survey.questions):
+                raise ValueError(f"Question index {q_index} out of range")
+
+            question = survey.questions[q_index]
+            field_name = parts[2]
+
+            if field_name == "choices" and len(parts) == 4:
+                # Specific choice: questions.0.choices.2
+                choice_index = int(parts[3])
+                if "choices" not in question or choice_index >= len(question["choices"]):
+                    raise ValueError(f"Choice index {choice_index} out of range in question {q_index}")
+                field_value = question["choices"][choice_index]
+            elif field_name in question:
+                # Question field: questions.0.question
+                field_value = question[field_name]
+            else:
+                raise ValueError(f"Field '{field_name}' not found in question {q_index}")
+
+        elif parts[0] == "appearance":
+            if len(parts) != 2:
+                raise ValueError(f"Appearance field path must be: appearance.fieldName")
+
+            appearance = survey.appearance or {}
+            field_name = parts[1]
+
+            if field_name not in appearance:
+                raise ValueError(f"Field '{field_name}' not found in appearance")
+
+            field_value = appearance[field_name]
+
+        else:
+            raise ValueError(f"Unknown root field: {parts[0]}. Use 'questions' or 'appearance'")
+
+        # Translate the field value
+        translated_value = await sync_to_async(translate_text)(
+            field_value, target_language, user_distinct_id=user.distinct_id
+        )
+
+        return translated_value
