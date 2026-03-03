@@ -6,7 +6,7 @@ import { BindLogic, useActions, useMountedLogic, useValues } from 'kea'
 import { router } from 'kea-router'
 import { useState } from 'react'
 
-import { IconGitBranch, IconInfo, IconPlus, IconTrash } from '@posthog/icons'
+import { IconGitBranch, IconInfo, IconMagicWand, IconPlus, IconTrash } from '@posthog/icons'
 import {
     LemonButton,
     LemonCalendarSelect,
@@ -71,6 +71,70 @@ import { SurveyEditQuestionGroup, SurveyEditQuestionHeader } from './SurveyEditQ
 import { SurveyFormAppearance } from './SurveyFormAppearance'
 import { DataCollectionType, SurveyEditSection, surveyLogic } from './surveyLogic'
 import { surveysLogic } from './surveysLogic'
+
+// Wrapper component that adds hover-based wand icon for per-field translation
+function TranslatableFieldWrapper({
+    children,
+    fieldPath,
+    fieldValue,
+    disabled,
+}: {
+    children: React.ReactElement
+    fieldPath: string
+    fieldValue: string
+    disabled?: boolean
+}): JSX.Element {
+    const [isHovered, setIsHovered] = useState(false)
+    const { translateField } = useActions(surveyLogic)
+    const { translatingLanguage, survey, editingLanguage } = useValues(surveyLogic)
+
+    const isTranslating = translatingLanguage !== null && translatingLanguage !== 'batch'
+
+    // Only show wand icon when editing a translation (not the original)
+    const showWandIcon = editingLanguage !== null
+
+    // Get current translation for context
+    const getCurrentTranslation = (): string | undefined => {
+        if (!editingLanguage || !fieldPath || !survey.translations?.[editingLanguage]) {
+            return undefined
+        }
+        // Parse fieldPath to get the translated value
+        // fieldPath format: "questions.0.question" or "appearance.thankYouMessageHeader"
+        const parts = fieldPath.split('.')
+        let current: any = survey.translations[editingLanguage]
+        for (const part of parts) {
+            if (current && typeof current === 'object') {
+                current = current[part]
+            } else {
+                break
+            }
+        }
+        return typeof current === 'string' ? current : undefined
+    }
+
+    return (
+        <div className="relative" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
+            {children}
+            {isHovered && !disabled && showWandIcon && fieldValue && editingLanguage && (
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 z-10">
+                    <Tooltip title={`Retranslate this field to ${editingLanguage}`}>
+                        <LemonButton
+                            icon={<IconMagicWand />}
+                            size="xsmall"
+                            type="secondary"
+                            loading={isTranslating}
+                            onClick={() => {
+                                const currentTranslation = getCurrentTranslation()
+                                translateField(fieldPath, fieldValue, editingLanguage, currentTranslation)
+                            }}
+                            disabledReason={!survey.id ? 'Save the survey first' : undefined}
+                        />
+                    </Tooltip>
+                </div>
+            )}
+        </div>
+    )
+}
 
 function SurveyCompletionConditions(): JSX.Element {
     const { survey, dataCollectionType, isAdaptiveLimitFFEnabled } = useValues(surveyLogic)
@@ -618,76 +682,113 @@ export default function SurveyEdit({ id }: { id: string }): JSX.Element {
                                                                       content: (
                                                                           <>
                                                                               <LemonField.Pure label="Thank you header">
-                                                                                  <LemonInput
-                                                                                      value={
+                                                                                  <TranslatableFieldWrapper
+                                                                                      fieldPath="appearance.thankYouMessageHeader"
+                                                                                      fieldValue={
                                                                                           survey.appearance
-                                                                                              .thankYouMessageHeader
+                                                                                              .thankYouMessageHeader ||
+                                                                                          ''
                                                                                       }
-                                                                                      onChange={(val) =>
-                                                                                          setSurveyValue('appearance', {
-                                                                                              ...survey.appearance,
-                                                                                              thankYouMessageHeader:
-                                                                                                  val,
-                                                                                          })
-                                                                                      }
-                                                                                      placeholder="ex: Thank you for your feedback!"
-                                                                                  />
+                                                                                  >
+                                                                                      <LemonInput
+                                                                                          value={
+                                                                                              survey.appearance
+                                                                                                  .thankYouMessageHeader
+                                                                                          }
+                                                                                          onChange={(val) =>
+                                                                                              setSurveyValue(
+                                                                                                  'appearance',
+                                                                                                  {
+                                                                                                      ...survey.appearance,
+                                                                                                      thankYouMessageHeader:
+                                                                                                          val,
+                                                                                                  }
+                                                                                              )
+                                                                                          }
+                                                                                          placeholder="ex: Thank you for your feedback!"
+                                                                                      />
+                                                                                  </TranslatableFieldWrapper>
                                                                               </LemonField.Pure>
                                                                               <LemonField.Pure
                                                                                   label="Thank you description"
                                                                                   className="mt-3"
                                                                               >
-                                                                                  <HTMLEditor
-                                                                                      value={
+                                                                                  <TranslatableFieldWrapper
+                                                                                      fieldPath="appearance.thankYouMessageDescription"
+                                                                                      fieldValue={
                                                                                           survey.appearance
-                                                                                              .thankYouMessageDescription
+                                                                                              .thankYouMessageDescription ||
+                                                                                          ''
                                                                                       }
-                                                                                      onChange={(val) =>
-                                                                                          setSurveyValue('appearance', {
-                                                                                              ...survey.appearance,
-                                                                                              thankYouMessageDescription:
-                                                                                                  val,
-                                                                                              thankYouMessageDescriptionContentType,
-                                                                                          })
-                                                                                      }
-                                                                                      onTabChange={(key) => {
-                                                                                          const updatedAppearance = {
-                                                                                              ...survey.appearance,
-                                                                                              thankYouMessageDescriptionContentType:
-                                                                                                  key === 'html'
-                                                                                                      ? 'html'
-                                                                                                      : 'text',
+                                                                                  >
+                                                                                      <HTMLEditor
+                                                                                          value={
+                                                                                              survey.appearance
+                                                                                                  .thankYouMessageDescription
                                                                                           }
-                                                                                          setSurveyValue(
-                                                                                              'appearance',
-                                                                                              updatedAppearance
-                                                                                          )
-                                                                                      }}
-                                                                                      activeTab={
-                                                                                          thankYouMessageDescriptionContentType ??
-                                                                                          'text'
-                                                                                      }
-                                                                                      textPlaceholder="ex: We really appreciate it."
-                                                                                  />
+                                                                                          onChange={(val) =>
+                                                                                              setSurveyValue(
+                                                                                                  'appearance',
+                                                                                                  {
+                                                                                                      ...survey.appearance,
+                                                                                                      thankYouMessageDescription:
+                                                                                                          val,
+                                                                                                      thankYouMessageDescriptionContentType,
+                                                                                                  }
+                                                                                              )
+                                                                                          }
+                                                                                          onTabChange={(key) => {
+                                                                                              const updatedAppearance =
+                                                                                                  {
+                                                                                                      ...survey.appearance,
+                                                                                                      thankYouMessageDescriptionContentType:
+                                                                                                          key === 'html'
+                                                                                                              ? 'html'
+                                                                                                              : 'text',
+                                                                                                  }
+                                                                                              setSurveyValue(
+                                                                                                  'appearance',
+                                                                                                  updatedAppearance
+                                                                                              )
+                                                                                          }}
+                                                                                          activeTab={
+                                                                                              thankYouMessageDescriptionContentType ??
+                                                                                              'text'
+                                                                                          }
+                                                                                          textPlaceholder="ex: We really appreciate it."
+                                                                                      />
+                                                                                  </TranslatableFieldWrapper>
                                                                               </LemonField.Pure>
                                                                               <LemonField.Pure
                                                                                   className="mt-2"
                                                                                   label="Button text"
                                                                               >
-                                                                                  <LemonInput
-                                                                                      value={
+                                                                                  <TranslatableFieldWrapper
+                                                                                      fieldPath="appearance.thankYouMessageCloseButtonText"
+                                                                                      fieldValue={
                                                                                           survey.appearance
-                                                                                              .thankYouMessageCloseButtonText
+                                                                                              .thankYouMessageCloseButtonText ||
+                                                                                          ''
                                                                                       }
-                                                                                      onChange={(val) =>
-                                                                                          setSurveyValue('appearance', {
-                                                                                              ...survey.appearance,
-                                                                                              thankYouMessageCloseButtonText:
-                                                                                                  val,
-                                                                                          })
-                                                                                      }
-                                                                                      placeholder="example: Close"
-                                                                                  />
+                                                                                  >
+                                                                                      <LemonInput
+                                                                                          value={
+                                                                                              survey.appearance
+                                                                                                  .thankYouMessageCloseButtonText
+                                                                                          }
+                                                                                          onChange={(val) =>
+                                                                                              setSurveyValue(
+                                                                                                  'appearance',
+                                                                                                  {
+                                                                                                      ...survey.appearance,
+                                                                                                      thankYouMessageCloseButtonText:
+                                                                                                          val,
+                                                                                                  }
+                                                                                              )
+                                                                                          }
+                                                                                          placeholder="example: Close"
+                                                                                      />
+                                                                                  </TranslatableFieldWrapper>
                                                                               </LemonField.Pure>
                                                                               <LemonField.Pure className="mt-2">
                                                                                   <LemonCheckbox
