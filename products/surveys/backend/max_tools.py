@@ -690,12 +690,23 @@ SURVEY_TRANSLATE_TOOL_DESCRIPTION = dedent("""
     - **Multiple languages**: Use target_languages array to translate to many languages at once
     - **Specific fields**: Use fields array to translate only certain fields
       (e.g., ['question', 'choices'] to skip descriptions and button text)
-    - **Smart retranslation**: Set only_changed_fields=True to retranslate only fields that changed
-    - **Per-field targeting**: Use field_path (e.g., 'questions.0.choices.2') for surgical translation
+    - **Smart retranslation**: Set only_changed_fields=True when base language changed and you want to update other languages efficiently
+    - **Per-field targeting**: Use field_path for surgical translation of a specific field
 
     # Smart Retranslation
-    When only_changed_fields=True, the tool compares current field values with _source snapshots
-    stored from previous translations. Only fields that changed are retranslated, saving time and cost.
+    When only_changed_fields=True, the tool detects which fields changed in the base language since last translation
+    by comparing current values with _source snapshots. Only fields that changed in the base language are retranslated.
+    Use this when user edited the English survey and wants to update Spanish/French/etc. efficiently.
+
+    # Per-Field Targeting Syntax
+    Use field_path parameter to translate a specific field. Examples:
+    - "questions.0.question" = first question's text
+    - "questions.1.description" = second question's description
+    - "questions.0.choices.2" = third choice (0-indexed) in first question
+    - "appearance.thankYouMessageHeader" = thank you header text
+
+    Note: Questions and choices are 0-indexed (first question = 0, second = 1, etc.)
+    When user says "question 1", convert to index 0. When they say "third choice", convert to index 2.
 
     # How it works
     - The tool uses AI to translate survey questions, descriptions, button text, and thank you messages
