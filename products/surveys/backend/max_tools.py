@@ -1009,6 +1009,46 @@ class TranslateSurveyTool(MaxTool):
 
         translations: dict[str, Any] = {}
 
+        # Get existing translations for smart retranslation
+        existing_translations = {}
+        if only_changed_fields and survey.translations:
+            existing_translations = survey.translations.get(target_language, {})
+
+        # Translate survey-level fields (name, description) if not doing per-question translation
+        if question_index is None and question_indices is None:
+            # Helper to check if survey-level field changed
+            def survey_field_changed(field_name: str, current_value: str | None) -> bool:
+                if not only_changed_fields or not existing_translations:
+                    return True
+                existing_source = existing_translations.get("_source", {})
+                return existing_source.get(field_name) != current_value
+
+            # Translate survey name
+            if survey.name and should_translate_field("name"):
+                if survey_field_changed("name", survey.name):
+                    translations["name"] = await sync_to_async(translate_text)(
+                        survey.name, target_language, user_distinct_id=user.distinct_id
+                    )
+                    translations.setdefault("_source", {})["name"] = survey.name
+                elif existing_translations.get("name"):
+                    translations["name"] = existing_translations["name"]
+                    if existing_translations.get("_source", {}).get("name"):
+                        translations.setdefault("_source", {})["name"] = existing_translations["_source"]["name"]
+
+            # Translate survey description
+            if survey.description and should_translate_field("description"):
+                if survey_field_changed("description", survey.description):
+                    translations["description"] = await sync_to_async(translate_text)(
+                        survey.description, target_language, user_distinct_id=user.distinct_id
+                    )
+                    translations.setdefault("_source", {})["description"] = survey.description
+                elif existing_translations.get("description"):
+                    translations["description"] = existing_translations["description"]
+                    if existing_translations.get("_source", {}).get("description"):
+                        translations.setdefault("_source", {})["description"] = existing_translations["_source"][
+                            "description"
+                        ]
+
         # Determine which questions to translate
         if question_indices is not None:
             # Multi-question selection
@@ -1022,11 +1062,6 @@ class TranslateSurveyTool(MaxTool):
             # All questions
             questions_to_translate = survey.questions
             questions_indices = list(range(len(survey.questions)))
-
-        # Get existing translations for smart retranslation
-        existing_translations = {}
-        if only_changed_fields and survey.translations:
-            existing_translations = survey.translations.get(target_language, {})
 
         # Translate questions
         if questions_to_translate:
