@@ -2135,7 +2135,9 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
 
         user = cast(User, request.user)
 
-        target_language = serializer.validated_data["target_language"]
+        target_language = request.data.get("target_language")
+        if not target_language:
+            raise exceptions.ValidationError("target_language is required")
 
         # Smart retranslation: only translate fields that changed since last translation
         only_changed_fields = request.data.get("only_changed_fields", False)
@@ -2195,8 +2197,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                     source_snapshot = existing_for_lang.get("_source", {}) if only_changed_fields else {}
 
                     # Track source English for this translation (for future smart retranslation)
-                    if not only_changed_fields:  # Only update source on full retranslation
-                        translated_question["_source"] = {}
+                    translated_question["_source"] = {}
 
                     # Translate question text
                     if question.get("question") and should_translate_field(
@@ -2205,8 +2206,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                         translated_question["question"] = translate_text(
                             question["question"], target_language, user_distinct_id=user.distinct_id
                         )
-                        if not only_changed_fields:
-                            translated_question["_source"]["question"] = question["question"]
+                        translated_question["_source"]["question"] = question["question"]
 
                     # Translate description if present
                     if question.get("description") and should_translate_field(
@@ -2215,8 +2215,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                         translated_question["description"] = translate_text(
                             question["description"], target_language, user_distinct_id=user.distinct_id
                         )
-                        if not only_changed_fields:
-                            translated_question["_source"]["description"] = question["description"]
+                        translated_question["_source"]["description"] = question["description"]
 
                     # Translate button text if present
                     if question.get("buttonText") and should_translate_field(
@@ -2225,8 +2224,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                         translated_question["buttonText"] = translate_text(
                             question["buttonText"], target_language, user_distinct_id=user.distinct_id
                         )
-                        if not only_changed_fields:
-                            translated_question["_source"]["buttonText"] = question["buttonText"]
+                        translated_question["_source"]["buttonText"] = question["buttonText"]
 
                     # Translate choices for multiple choice questions
                     if question.get("choices"):
@@ -2236,16 +2234,14 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                                 translate_text(choice, target_language, user_distinct_id=user.distinct_id)
                                 for choice in question["choices"]
                             ]
-                            if not only_changed_fields:
-                                translated_question["_source"]["choices"] = choices_str
+                            translated_question["_source"]["choices"] = choices_str
 
                     # Translate link text/name
                     if question.get("link") and should_translate_field("link", question["link"], source_snapshot):
                         translated_question["link"] = translate_text(
                             question["link"], target_language, user_distinct_id=user.distinct_id
                         )
-                        if not only_changed_fields:
-                            translated_question["_source"]["link"] = question["link"]
+                        translated_question["_source"]["link"] = question["link"]
 
                     translated_questions.append(translated_question)
 
@@ -2264,8 +2260,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                 appearance_source = existing_appearance.get("_source", {}) if only_changed_fields else {}
 
                 # Track source for appearance fields
-                if not only_changed_fields:
-                    thank_you_translations["_source"] = {}
+                thank_you_translations["_source"] = {}
 
                 # Translate each appearance field with smart retranslation support
                 if survey_appearance.get("thankYouMessageHeader") and field_changed_or_first_time(
@@ -2274,10 +2269,9 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                     thank_you_translations["thankYouMessageHeader"] = translate_text(
                         survey_appearance["thankYouMessageHeader"], target_language, user_distinct_id=user.distinct_id
                     )
-                    if not only_changed_fields:
-                        thank_you_translations["_source"]["thankYouMessageHeader"] = survey_appearance[
-                            "thankYouMessageHeader"
-                        ]
+                    thank_you_translations["_source"]["thankYouMessageHeader"] = survey_appearance[
+                        "thankYouMessageHeader"
+                    ]
 
                 if survey_appearance.get("thankYouMessageDescription") and field_changed_or_first_time(
                     "thankYouMessageDescription", survey_appearance["thankYouMessageDescription"], appearance_source
@@ -2287,10 +2281,9 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                         target_language,
                         user_distinct_id=user.distinct_id,
                     )
-                    if not only_changed_fields:
-                        thank_you_translations["_source"]["thankYouMessageDescription"] = survey_appearance[
-                            "thankYouMessageDescription"
-                        ]
+                    thank_you_translations["_source"]["thankYouMessageDescription"] = survey_appearance[
+                        "thankYouMessageDescription"
+                    ]
 
                 if survey_appearance.get("thankYouMessageCloseButtonText") and field_changed_or_first_time(
                     "thankYouMessageCloseButtonText",
@@ -2302,10 +2295,9 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                         target_language,
                         user_distinct_id=user.distinct_id,
                     )
-                    if not only_changed_fields:
-                        thank_you_translations["_source"]["thankYouMessageCloseButtonText"] = survey_appearance[
-                            "thankYouMessageCloseButtonText"
-                        ]
+                    thank_you_translations["_source"]["thankYouMessageCloseButtonText"] = survey_appearance[
+                        "thankYouMessageCloseButtonText"
+                    ]
 
                 if thank_you_translations:
                     translations["appearance"] = thank_you_translations
@@ -2401,8 +2393,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
             source_snapshot = existing_q.get("_source", {}) if only_changed_fields else {}
 
             # Track source for this question
-            if not only_changed_fields:
-                translated_question["_source"] = {}
+            translated_question["_source"] = {}
 
             # Helper function for smart retranslation
             def should_translate_field(
@@ -2423,8 +2414,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                 translated_question["question"] = translate_text(
                     question["question"], target_language, user_distinct_id=user.distinct_id
                 )
-                if not only_changed_fields:
-                    translated_question["_source"]["question"] = question["question"]
+                translated_question["_source"]["question"] = question["question"]
 
             # Translate description if present
             if question.get("description") and should_translate_field(
@@ -2433,8 +2423,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                 translated_question["description"] = translate_text(
                     question["description"], target_language, user_distinct_id=user.distinct_id
                 )
-                if not only_changed_fields:
-                    translated_question["_source"]["description"] = question["description"]
+                translated_question["_source"]["description"] = question["description"]
 
             # Translate button text if present
             if question.get("buttonText") and should_translate_field(
@@ -2443,8 +2432,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                 translated_question["buttonText"] = translate_text(
                     question["buttonText"], target_language, user_distinct_id=user.distinct_id
                 )
-                if not only_changed_fields:
-                    translated_question["_source"]["buttonText"] = question["buttonText"]
+                translated_question["_source"]["buttonText"] = question["buttonText"]
 
             # Translate choices for multiple choice questions
             if question.get("choices") and question.get("type") in [
@@ -2457,16 +2445,14 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                         translate_text(choice, target_language, user_distinct_id=user.distinct_id)
                         for choice in question["choices"]
                     ]
-                    if not only_changed_fields:
-                        translated_question["_source"]["choices"] = choices_str
+                    translated_question["_source"]["choices"] = choices_str
 
             # Translate link text/name
             if question.get("link") and should_translate_field("link", question.get("link"), source_snapshot):
                 translated_question["link"] = translate_text(
                     question["link"], target_language, user_distinct_id=user.distinct_id
                 )
-                if not only_changed_fields:
-                    translated_question["_source"]["link"] = question["link"]
+                translated_question["_source"]["link"] = question["link"]
 
             report_user_action(
                 user,
@@ -2590,8 +2576,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                         source_snapshot = existing_q.get("_source", {}) if only_changed_fields else {}
 
                         # Track source for this question
-                        if not only_changed_fields:
-                            translated_question["_source"] = {}
+                        translated_question["_source"] = {}
 
                         if question.get("question") and should_translate_field(
                             "question", question.get("question"), source_snapshot
@@ -2599,8 +2584,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                             translated_question["question"] = await sync_to_async(translate_text)(
                                 question["question"], lang, user_distinct_id=user.distinct_id
                             )
-                            if not only_changed_fields:
-                                translated_question["_source"]["question"] = question["question"]
+                            translated_question["_source"]["question"] = question["question"]
 
                         if question.get("description") and should_translate_field(
                             "description", question.get("description"), source_snapshot
@@ -2608,8 +2592,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                             translated_question["description"] = await sync_to_async(translate_text)(
                                 question["description"], lang, user_distinct_id=user.distinct_id
                             )
-                            if not only_changed_fields:
-                                translated_question["_source"]["description"] = question["description"]
+                            translated_question["_source"]["description"] = question["description"]
 
                         if question.get("buttonText") and should_translate_field(
                             "buttonText", question.get("buttonText"), source_snapshot
@@ -2617,8 +2600,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                             translated_question["buttonText"] = await sync_to_async(translate_text)(
                                 question["buttonText"], lang, user_distinct_id=user.distinct_id
                             )
-                            if not only_changed_fields:
-                                translated_question["_source"]["buttonText"] = question["buttonText"]
+                            translated_question["_source"]["buttonText"] = question["buttonText"]
 
                         if question.get("choices") and question.get("type") in [
                             SurveyQuestionType.SINGLE_CHOICE,
@@ -2634,8 +2616,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                                         )
                                     )
                                 translated_question["choices"] = choice_translations
-                                if not only_changed_fields:
-                                    translated_question["_source"]["choices"] = choices_str
+                                translated_question["_source"]["choices"] = choices_str
 
                         if question.get("link") and should_translate_field(
                             "link", question.get("link"), source_snapshot
@@ -2643,8 +2624,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                             translated_question["link"] = await sync_to_async(translate_text)(
                                 question["link"], lang, user_distinct_id=user.distinct_id
                             )
-                            if not only_changed_fields:
-                                translated_question["_source"]["link"] = question["link"]
+                            translated_question["_source"]["link"] = question["link"]
 
                         translated_questions.append(translated_question)
 
@@ -2659,8 +2639,7 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                     appearance_source = existing_appearance.get("_source", {}) if only_changed_fields else {}
 
                     # Track source for appearance fields
-                    if not only_changed_fields:
-                        thank_you_translations["_source"] = {}
+                    thank_you_translations["_source"] = {}
 
                     if survey.appearance.get("thankYouMessageHeader") and field_changed_or_first_time(
                         "thankYouMessageHeader", survey.appearance["thankYouMessageHeader"], appearance_source
@@ -2668,10 +2647,9 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                         thank_you_translations["thankYouMessageHeader"] = await sync_to_async(translate_text)(
                             survey.appearance["thankYouMessageHeader"], lang, user_distinct_id=user.distinct_id
                         )
-                        if not only_changed_fields:
-                            thank_you_translations["_source"]["thankYouMessageHeader"] = survey.appearance[
-                                "thankYouMessageHeader"
-                            ]
+                        thank_you_translations["_source"]["thankYouMessageHeader"] = survey.appearance[
+                            "thankYouMessageHeader"
+                        ]
 
                     if survey.appearance.get("thankYouMessageDescription") and field_changed_or_first_time(
                         "thankYouMessageDescription", survey.appearance["thankYouMessageDescription"], appearance_source
@@ -2679,10 +2657,9 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                         thank_you_translations["thankYouMessageDescription"] = await sync_to_async(translate_text)(
                             survey.appearance["thankYouMessageDescription"], lang, user_distinct_id=user.distinct_id
                         )
-                        if not only_changed_fields:
-                            thank_you_translations["_source"]["thankYouMessageDescription"] = survey.appearance[
-                                "thankYouMessageDescription"
-                            ]
+                        thank_you_translations["_source"]["thankYouMessageDescription"] = survey.appearance[
+                            "thankYouMessageDescription"
+                        ]
 
                     if survey.appearance.get("thankYouMessageCloseButtonText") and field_changed_or_first_time(
                         "thankYouMessageCloseButtonText",
@@ -2694,10 +2671,9 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
                             lang,
                             user_distinct_id=user.distinct_id,
                         )
-                        if not only_changed_fields:
-                            thank_you_translations["_source"]["thankYouMessageCloseButtonText"] = survey.appearance[
-                                "thankYouMessageCloseButtonText"
-                            ]
+                        thank_you_translations["_source"]["thankYouMessageCloseButtonText"] = survey.appearance[
+                            "thankYouMessageCloseButtonText"
+                        ]
 
                     if thank_you_translations:
                         translations["appearance"] = thank_you_translations
