@@ -1070,12 +1070,15 @@ class TranslateSurveyTool(MaxTool):
                 question_translation: dict[str, Any] = {}
 
                 # Get existing translation and _source snapshot for this question
+                # Read from INLINE structure: survey.questions[q_idx].translations[target_language]
                 existing_q = {}
                 current_source_snapshot = {}
-                if only_changed_fields and existing_translations.get("questions"):
-                    if q_idx < len(existing_translations["questions"]):
-                        existing_q = existing_translations["questions"][q_idx]
-                        current_source_snapshot = existing_q.get("_source", {})
+                if only_changed_fields:
+                    # Get the full question object from survey.questions
+                    survey_question = survey.questions[q_idx] if q_idx < len(survey.questions) else {}
+                    question_translations = survey_question.get("translations", {})
+                    existing_q = question_translations.get(target_language, {})
+                    current_source_snapshot = existing_q.get("_source", {})
 
                 # Helper to check if field changed (for smart retranslation)
                 def field_changed(field_name: str, current_value: str | None, snapshot=current_source_snapshot) -> bool:
