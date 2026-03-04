@@ -343,6 +343,7 @@ class AssistantTool(StrEnum):
     EXPERIMENT_SESSION_REPLAYS_SUMMARY = "experiment_session_replays_summary"
     CREATE_SURVEY = "create_survey"
     EDIT_SURVEY = "edit_survey"
+    TRANSLATE_SURVEY = "translate_survey"
     ANALYZE_SURVEY_RESPONSES = "analyze_survey_responses"
     READ_TAXONOMY = "read_taxonomy"
     SEARCH = "search"

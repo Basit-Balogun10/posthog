@@ -904,3 +904,144 @@ class TestEditSurveyTool(BaseTest):
         assert "Stop" in preview
         assert "Archive" in preview
         assert "Survey to Archive" in preview
+
+
+class TestTranslateSurveyTool(BaseTest):
+    """Tests for TranslateSurveyTool - AI-powered survey translation"""
+
+    def setUp(self):
+        super().setUp()
+        os.environ["OPENAI_API_KEY"] = "test-api-key"
+        self._config: RunnableConfig = {
+            "configurable": {
+                "team": self.team,
+                "user": self.user,
+            },
+        }
+
+    def tearDown(self):
+        super().tearDown()
+        if "OPENAI_API_KEY" in os.environ:
+            del os.environ["OPENAI_API_KEY"]
+
+    async def _create_test_survey(self, **kwargs):
+        """Helper to create a test survey"""
+        defaults = {
+            "name": "Test Survey",
+            "description": "Test Description",
+            "team": self.team,
+            "created_by": self.user,
+            "type": SurveyType.POPOVER,
+            "questions": [
+                {
+                    "type": SurveyQuestionType.OPEN,
+                    "question": "How satisfied are you?",
+                    "description": "Please rate us",
+                    "buttonText": "Submit",
+                }
+            ],
+            "appearance": {
+                "thankYouMessageHeader": "Thank you!",
+                "thankYouMessageDescription": "Your feedback matters",
+            },
+        }
+        defaults.update(kwargs)
+        return await sync_to_async(Survey.objects.create)(**defaults)
+
+    @pytest.mark.django_db
+    @pytest.mark.asyncio
+    @patch("products.llm_analytics.backend.translation.llm.translate_text")
+    async def test_basic_translation(self, mock_translate):
+        """Test basic full survey translation to one language"""
+        # Import here to avoid enum validation during module load
+        from .max_tools import TranslateSurveyTool
+
+        mock_translate.return_value = "Spanish translation"
+
+        survey = await self._create_test_survey()
+        tool = TranslateSurveyTool(team=self.team, user=self.user, config=self._config)
+
+        result = await tool._arun(survey_id=str(survey.id), target_language="es")
+
+        assert "successfully translated" in result[0].lower()
+        assert "es" in result[0]
+        # Verify translation called for question fields
+        assert mock_translate.call_count >= 3  # question, description, buttonText, thank you messages
+
+    @pytest.mark.django_db
+    @pytest.mark.asyncio
+    @patch("products.llm_analytics.backend.translation.llm.translate_text")
+    async def test_translation_with_inline_snapshots(self, mock_translate):
+        """Test that snapshots are stored inline in questions"""
+        from .max_tools import TranslateSurveyTool
+
+        mock_translate.return_value = "Traducción"
+
+        survey = await self._create_test_survey(
+            questions=[
+                {
+                    "type": SurveyQuestionType.OPEN,
+                    "question": "What do you think?",
+                    "description": "Be honest",
+                }
+            ]
+        )
+        tool = TranslateSurveyTool(team=self.team, user=self.user, config=self._config)
+
+        result = await tool._arun(survey_id=str(survey.id), target_language="es")
+
+        # Verify response structure has questions array
+        assert result[1]["translations"]["questions"]
+        question_translation = result[1]["translations"]["questions"][0]
+
+        # Verify snapshots in returned translation
+        assert "_source" in question_translation
+        assert question_translation["_source"]["question"] == "What do you think?"
+        assert question_translation["_source"]["description"] == "Be honest"
+
+    @pytest.mark.django_db
+    @pytest.mark.asyncio
+    async def test_translation_survey_not_found(self):
+        """Test translation with non-existent survey"""
+        from .max_tools import TranslateSurveyTool
+
+        tool = TranslateSurveyTool(team=self.team, user=self.user, config=self._config)
+
+        result = await tool._arun(survey_id="00000000-0000-0000-0000-000000000000", target_language="es")
+
+        assert "not found" in result[0].lower() or "failed" in result[0].lower()
+
+    @pytest.mark.django_db
+    @pytest.mark.asyncio
+    @patch("products.llm_analytics.backend.translation.llm.translate_text")
+    async def test_smart_retranslation_reads_from_inline(self, mock_translate):
+        """Test that smart retranslation reads snapshots from inline structure"""
+        from .max_tools import TranslateSurveyTool
+
+        mock_translate.return_value = "Nueva traducción"
+
+        # Create survey with existing inline translation and snapshot
+        survey = await self._create_test_survey(
+            questions=[
+                {
+                    "type": SurveyQuestionType.OPEN,
+                    "question": "How satisfied are you?",
+                    "translations": {
+                        "es": {
+                            "question": "¿Qué tan satisfecho estás?",
+                            "_source": {"question": "How satisfied are you?"},  # Snapshot shows no change
+                        }
+                    },
+                }
+            ]
+        )
+
+        tool = TranslateSurveyTool(team=self.team, user=self.user, config=self._config)
+
+        # With smart retranslation (only_changed_fields=True), should skip unchanged question
+        result = await tool._arun(survey_id=str(survey.id), target_language="es", only_changed_fields=True)
+
+        # Should not retranslate since source hasn't changed
+        # The question translation should be preserved from existing
+        translations = result[1]["translations"]
+        assert "questions" in translations

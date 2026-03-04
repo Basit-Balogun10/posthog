@@ -407,6 +407,7 @@ export type AssistantTool =
     | 'experiment_session_replays_summary'
     | 'create_survey'
     | 'edit_survey'
+    | 'translate_survey'
     | 'analyze_survey_responses'
     | 'read_taxonomy'
     | 'search'
