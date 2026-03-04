@@ -279,8 +279,50 @@ class Survey(FileSystemSyncMixin, RootTeamMixin, UUIDTModel):
     # TipTap editor layout for form-builder surveys
     form_content = models.JSONField(blank=True, null=True)
     # Translations for multi-language support
-    # Format: { [languageCode]: { name: string, description: string, thankYouMessageHeader: string, thankYouMessageDescription: string, thankYouMessageCloseButtonText: string, ... } }
+    # IMPORTANT: Questions have INLINE translations, NOT in this field!
+    #
+    # Survey-level and appearance translations are stored here:
+    # Format: {
+    #   [languageCode]: {
+    #     name: string,                      # Survey name translation
+    #     description: string,               # Survey description translation
+    #     _source: {                         # English source snapshots for smart retranslation
+    #       name: string,
+    #       description: string
+    #     },
+    #     appearance: {                      # Thank you message translations
+    #       thankYouMessageHeader: string,
+    #       thankYouMessageDescription: string,
+    #       thankYouMessageCloseButtonText: string,
+    #       _source: {                       # Appearance snapshots
+    #         thankYouMessageHeader: string,
+    #         thankYouMessageDescription: string,
+    #         thankYouMessageCloseButtonText: string
+    #       }
+    #     }
+    #   }
+    # }
+    #
+    # Question translations are stored INLINE in the questions array:
+    # survey.questions[i].translations = {
+    #   [languageCode]: {
+    #     question: string,
+    #     description: string,
+    #     buttonText: string,
+    #     choices: [string],
+    #     link: string,
+    #     _source: {                         # Per-question English snapshots
+    #       question: string,
+    #       description: string,
+    #       buttonText: string,
+    #       choices: string,                 # Stored as comma-separated string
+    #       link: string
+    #     }
+    #   }
+    # }
+    #
     # Language codes: Any string - allows customers to use their own language keys (e.g., "es", "es-MX", "english", "french")
+    # _source snapshots: Track English text at time of translation for smart retranslation (only retranslate fields that changed)
     translations = models.JSONField(blank=True, null=True)
 
     # Use the survey_type instead. If it's external_survey, it's publicly shareable.
